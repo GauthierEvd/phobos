@@ -663,16 +663,34 @@ struct phobos_global_context {
     struct mocking_functions mocks;
 };
 
+struct dss_handle;
+
 /**
- * Initialize the phobos_global_context structure. Must be called before any
- * other phobos function or module loading routine.
+ * Structure containing thread information about Phobos.
+ */
+struct phobos_thread_context {
+    /** Thread-wide handle to DSS */
+    struct dss_handle *dss_handle;
+};
+
+/**
+ * Initialize the phobos_global_context & phobos_thread_context structures.
+ * Must be called before any other phobos function or module loading routine
+ * in any thread.
  */
 int pho_context_init(void);
 
 /**
- * Release the phobos_global_context structure. Once called, no phobos function
- * or module loading routine should be called unless pho_context_init is called
- * again.
+ * Initialize the phobos_global_context without the phobos_thread_context.
+ * Must be called before any other phobos function or module loading routine
+ * in any thread ONLY IF there is no need for a DSS connection.
+ */
+void pho_context_init_without_dss(void);
+
+/**
+ * Release the phobos_global_context & phobos_thread_context structures.
+ * Once called, no phobos function or module loading routine should be called
+ * unless pho_context_init is called again.
  */
 void pho_context_fini(void);
 
@@ -684,6 +702,11 @@ void pho_context_fini(void);
  * therefore be passed to load_module when loading a module.
  */
 struct phobos_global_context *phobos_context(void);
+
+/**
+ * Return a pointer to the thread context of Phobos.
+ */
+struct phobos_thread_context *phobos_thread_context(void);
 
 /**
  * This function should be called from the code inside the module's library.
@@ -699,6 +722,8 @@ struct phobos_global_context *phobos_context(void);
 void phobos_module_context_set(struct phobos_global_context *context);
 
 void pho_context_reset_mock_functions(void);
+
+struct dss_handle *pho_context_get_dss_handle(void);
 
 /**
  * Generate a unparsed UUID and return it as a string

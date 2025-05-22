@@ -2295,9 +2295,7 @@ int main(void)
     int rc;
 
     pho_context_init();
-    rc = pho_cfg_init_local("../phobos.conf");
-    if (rc)
-        return rc;
+    atexit(pho_context_fini);
 
     pho_log_level_set(PHO_LOG_DEBUG);
     /* TODO the initial state of the devices can be a parameter (mounted,
@@ -2354,9 +2352,6 @@ int main(void)
     error_count += cmocka_run_group_tests(test_device_exchange,
                                           io_sched_setup,
                                           io_sched_teardown);
-
-    pho_cfg_local_fini();
-    pho_context_fini();
 
     return error_count;
 }

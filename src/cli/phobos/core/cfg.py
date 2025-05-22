@@ -30,7 +30,7 @@ import os
 from phobos.core.ffi import (LIBPHOBOS, ResourceFamily)
 
 # Put this in a CFG class, like Store/Admin Clients
-LIBPHOBOS.phobos_init()
+LIBPHOBOS.phobos_init_without_dss()
 
 def load_file(path=None):
     """Load a configuration file from path"""

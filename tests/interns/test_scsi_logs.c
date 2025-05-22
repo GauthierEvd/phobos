@@ -434,15 +434,12 @@ int main(void)
     int error_count;
     int rc;
 
+    pho_context_init();
+
     rc = access("/dev/changer", F_OK);
     if (rc == -1)
         /* Exit code for skipping the test */
         return 77;
-
-    pho_context_init();
-    rc = pho_cfg_init_local("../phobos.conf");
-    if (rc)
-        return rc;
 
     pho_log_level_set(PHO_LOG_INFO);
 
@@ -451,7 +448,6 @@ int main(void)
                       global_setup_dss_and_tlc_lib_with_dbinit,
                       global_teardown_dss_and_tlc_lib_with_dbdrop);
 
-    pho_cfg_local_fini();
     pho_context_fini();
 
     return error_count;

@@ -291,6 +291,7 @@ int main(int argc, char **argv)
     struct csv_test_data td;
     int rc;
 
+    unsetenv("PHOBOS_CFG_FILE");
     test_env_initialize();
 
     pho_run_test("Test 1: get variables before anything is set",

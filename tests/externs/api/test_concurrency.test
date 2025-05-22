@@ -68,7 +68,6 @@ function cleanup()
 
 function test_concurrency()
 {
-    $test_bin --num-threads 50 --file "${FILES[0]}" --action put --load-first
     $test_bin --num-threads 50 --file "${FILES[0]}" --action put
 }
 

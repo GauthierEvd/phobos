@@ -412,6 +412,7 @@ int main(void)
         /* Exit code for skipping the test */
         return 77;
 
+    unsetenv("PHOBOS_CFG_FILE");
     pho_context_init();
     rc = pho_cfg_init_local("../phobos.conf");
     if (rc)

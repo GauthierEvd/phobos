@@ -113,6 +113,11 @@ int phobos_init(void)
     return 0;
 }
 
+void phobos_init_without_dss(void)
+{
+    pho_context_init_without_dss();
+}
+
 void phobos_fini(void)
 {
     pho_context_fini();

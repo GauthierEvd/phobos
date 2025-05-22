@@ -319,6 +319,8 @@ struct pho_xfer_target {
  */
 int phobos_init(void);
 
+void phobos_init_without_dss(void);
+
 /**
  * Finalize the global context of Phobos.
  *

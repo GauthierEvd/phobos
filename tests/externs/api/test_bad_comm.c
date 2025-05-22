@@ -662,9 +662,6 @@ int main(int argc, char **argv)
     pho_context_init();
     atexit(pho_context_fini);
 
-    pho_cfg_init_local(NULL);
-    atexit(pho_cfg_local_fini);
-
     addr.af_unix.path = "/tmp/socklrs";
     assert(!pho_comm_open(&ci, &addr, PHO_COMM_UNIX_CLIENT));
 

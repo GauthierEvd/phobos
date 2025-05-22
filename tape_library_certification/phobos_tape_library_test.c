@@ -168,12 +168,6 @@ int main(int argc, char **argv)
         exit(EINVAL);
     }
 
-    rc = pho_cfg_init_local(NULL);
-    if (rc) {
-        pho_error(rc, "Error when loading local conf");
-        exit(-rc);
-    }
-
     if (argc == 4)
         pho_log_level_set(atoi(argv[3]));
 

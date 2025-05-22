@@ -157,22 +157,11 @@ static void test_fill_put_params(void)
     string_array_free(&xfer.xd_params.put.tags);
 }
 
-static void load_config(void)
-{
-    int rc;
-
-    rc = pho_cfg_init_local("../phobos.conf");
-    atexit(pho_cfg_local_fini);
-    if (rc != 0 && rc != -EALREADY)
-        exit(EXIT_FAILURE);
-}
-
 int main(int argc, char **argv)
 {
     pho_context_init();
     atexit(pho_context_fini);
 
-    load_config();
     test_fill_put_params();
 
     return EXIT_SUCCESS;

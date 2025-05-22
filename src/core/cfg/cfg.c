@@ -35,15 +35,6 @@
 #include <string.h>
 #include <ini_config.h>
 
-/** XXX if this is used one day, it must be in a global context, not a global
- * variable as it needs to be shared between modules
- * (cf. struct phobos_global_context).
- *
- * Note that a new per-thread context will have to be created for this.
- */
-/** thread-wide handle to DSS */
-static __thread void *thr_dss_hdl;
-
 static inline bool config_is_loaded(void)
 {
     return phobos_context()->config.cfg_items != NULL;
@@ -104,7 +95,7 @@ int pho_cfg_init_local(const char *config_file)
 {
     const char *cfg = config_file;
 
-    if (config_is_loaded())
+    if (phobos_context() && config_is_loaded())
         return -EALREADY;
 
     if (cfg == NULL)
@@ -127,19 +118,6 @@ void pho_cfg_local_fini(void)
     free_ini_config(phobos_context()->config.cfg_items);
     phobos_context()->config.cfg_items = NULL;
     MUTEX_UNLOCK(&phobos_context()->config.lock);
-}
-
-/**
- * Allow access to global config parameters for the current thread.
- * This can only be called after the DSS is initialized.
- */
-int pho_cfg_set_thread_conn(void *dss_handle)
-{
-    if (dss_handle == NULL)
-        return -EINVAL;
-
-    thr_dss_hdl = dss_handle;
-    return 0;
 }
 
 /**
@@ -271,6 +249,7 @@ static int pho_cfg_get_local(const char *section, const char *name,
  * @retval -ENODATA if the parameter in not defined.
  * @retval other negative error code on failure.
  */
+__attribute__((unused))
 static int pho_cfg_get_global(const char *section, const char *name,
                               const char **value)
 {
@@ -294,11 +273,8 @@ int pho_cfg_get_val_from_level(const char *section, const char *name,
         return pho_cfg_get_local(section, name, value);
 
     case PHO_CFG_LEVEL_GLOBAL:
-        /* if connection is not set */
-        if (thr_dss_hdl == NULL)
-            return -ENODATA;
-
-        return pho_cfg_get_global(section, name, value);
+        /* from database */
+        return -ENODATA;
 
     default:
         return -EINVAL;

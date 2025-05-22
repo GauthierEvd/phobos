@@ -108,6 +108,7 @@ int main(void)
         cmocka_unit_test(gpo_invalid),
     };
 
+    unsetenv("PHOBOS_CFG_FILE");
     pho_context_init();
     atexit(pho_context_fini);
 

@@ -27,12 +27,13 @@ struct conf {
     phobos_store_action_t action;
     int                   type;
     char                 *file;
-    bool                  load_first;
 };
 
 static void *action_thread(void *tdata)
 {
     struct thread_data *data = (struct thread_data *)tdata;
+
+    pho_context_init();
 
     /* the file descriptor has to be unique to each thread,
      * otherwise, read operations cannot be concurrent on the
@@ -43,6 +44,8 @@ static void *action_thread(void *tdata)
 
     pthread_barrier_wait(data->barrier);
     data->rc = data->action(&data->xfer, 1, NULL, NULL);
+
+    pho_context_fini();
 
     return &data->rc;
 }
@@ -90,12 +93,6 @@ static struct option cliopts[] = {
         .val = 'F',
     },
     {
-        .name = "load-first",
-        .has_arg = no_argument,
-        .flag = NULL,
-        .val = 'L',
-    },
-    {
         .name = "help",
         .has_arg = no_argument,
         .flag = NULL,
@@ -113,7 +110,6 @@ static void usage(char *progname)
         "conditions\n"
         "\n"
         "    --action      put\n"
-        "    --load-first  load the config file before starting threads\n"
         "    --num-threads number of concurrent operation run simultaneously\n"
         "    --file        name of the file to read for put\n",
         progname);
@@ -137,9 +133,6 @@ static int parse_args(int argc, char **argv, struct conf *conf)
             if (!conf->num_threads)
                 return -EINVAL;
 
-            break;
-        case 'L':
-            conf->load_first = true;
             break;
         case 'F':
             conf->file = optarg;
@@ -209,8 +202,6 @@ int main(int argc, char **argv)
     pho_context_init();
     atexit(pho_context_fini);
 
-    conf.load_first = false;
-
     rc = parse_args(argc, argv, &conf);
     if (rc)
         return rc;
@@ -226,12 +217,6 @@ int main(int argc, char **argv)
     rc = file_size(conf.file, &size);
     if (rc)
         return -rc;
-
-    if (conf.load_first) {
-        rc = pho_cfg_init_local(NULL);
-        if (rc)
-            return -rc;
-    }
 
     for (i = 0; i < conf.num_threads; i++) {
         struct pho_xfer_desc *xfer = &threads[i].xfer;

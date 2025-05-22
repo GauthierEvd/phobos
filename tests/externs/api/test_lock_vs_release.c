@@ -140,7 +140,12 @@ static void *putter(void *_arg)
 
     struct pho_xfer_target target = {0};
     struct pho_xfer_desc xfer = {0};
+    int rc;
     int i;
+
+    rc = phobos_init();
+    if (rc)
+        error(-rc, "Putter %s could not init phobos", dir_tag);
 
     /* prepare target */
     target.xt_fd = open(dir_tag, O_RDWR | O_CREAT, 0600);
@@ -173,6 +178,7 @@ static void *putter(void *_arg)
 
     close(target.xt_fd);
     pho_xfer_desc_clean(&xfer);
+    phobos_fini();
     pthread_exit(NULL);
 }
 
@@ -184,7 +190,12 @@ struct dir_deleter_arg {
 static void *dir_deleter(void *_arg)
 {
     struct dir_deleter_arg *arg = (struct dir_deleter_arg *)_arg;
+    int rc;
     int i;
+
+    rc = phobos_init();
+    if (rc)
+        error(-rc, "Deleter could not init phobos");
 
     for (i = 0; i < NB_DELETED_DIR; i++) {
         struct pho_id dir_id;
@@ -200,6 +211,7 @@ static void *dir_deleter(void *_arg)
             error(-rc, "Unable to lock the dir %d", i);
     }
 
+    phobos_fini();
     pthread_exit(NULL);
 }
 
@@ -255,6 +267,9 @@ int main(int argc, char **argv)
 
     /* dir deleter join */
     pthread_join(dir_deleter_id, NULL);
+
+    phobos_admin_fini(&adm);
+    phobos_fini();
 
     exit(EXIT_SUCCESS);
 }

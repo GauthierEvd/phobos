@@ -30,6 +30,8 @@ TESTS_LIB_DEPS=$(LRS_LIB) $(LDM_LIB) $(IO_LIB) $(CORE_LIB) $(DAEMON_LIB) \
 TESTS_LIB=../libpho_test_utils.la
 TESTS_LIB_INCLUDES=-I$(TO_SRC)/tlc -I$(TO_SRC)/tlc/scsi -I..
 
+TESTS_ENVIRONMENT=PHOBOS_CFG_FILE=../phobos.conf
+
 if VALGRIND_ENABLED
 @VALGRIND_CHECK_RULES@
 VALGRIND_SUPPRESSIONS_FILES=../supp-files/valgrind.supp ../supp-files/glib.supp
