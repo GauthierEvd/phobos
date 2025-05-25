@@ -556,13 +556,32 @@ int pho_comm_close(struct pho_comm_info *ci)
 
 static int _send_until_complete(int fd, const void *buf, size_t size)
 {
-    size_t count;
+    ssize_t count;
+    int rc = 0;
 
     while (size) {
         count = send(fd, buf, size, MSG_NOSIGNAL);
-        if (count == -1)
-            return -errno;
-        size -= count;
+        if (count > 0) {
+            buf += count;
+            size -= count;
+            continue;
+        }
+
+        if (count == -1) {
+            if (errno == EAGAIN) {
+                /* Wait until the socket is writable */
+                fd_set wfds;
+                FD_ZERO(&wfds);
+                FD_SET(fd, &wfds);
+
+                rc = select(fd + 1, NULL, &wfds, NULL, NULL);
+                if (rc < 0)
+                    return -errno;
+                continue;
+            } else {
+                return -errno;
+            }
+        }
     }
 
     return 0;
