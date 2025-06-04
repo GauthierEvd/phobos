@@ -76,7 +76,6 @@ const struct pho_config_item cfg_store[] = {
  * the fly.
  */
 struct phobos_handle {
-    struct dss_handle dss;          /**< DSS handle, configured from conf */
     struct pho_xfer_desc *xfers;    /**< Transfers being handled */
     struct pho_data_processor *processors;
                                     /**< Processors corresponding to xfers */
@@ -1248,7 +1247,7 @@ static int store_end_delete_xfer(struct phobos_handle *pho,
                                  struct pho_xfer_desc *xfer,
                                  struct pho_data_processor *proc)
 {
-    struct dss_handle *dss = &pho->dss;
+    struct dss_handle *dss = pho_context_get_dss_handle();
     struct copy_info copy = {
         .object_uuid = xfer->xd_targets->xt_objuuid,
         .version = xfer->xd_targets->xt_version,
@@ -1327,6 +1326,7 @@ static int store_end_encoder_xfer(struct phobos_handle *pho,
                                   struct pho_xfer_desc *xfer,
                                   struct pho_data_processor *encoder)
 {
+    struct dss_handle *dss = pho_context_get_dss_handle();
     int rc2;
     int rc;
     int i;
@@ -1336,14 +1336,14 @@ static int store_end_encoder_xfer(struct phobos_handle *pho,
             continue;
 
         pho_debug("Saving layout for objid:'%s'", xfer->xd_targets[i].xt_objid);
-        rc = dss_extent_insert(&pho->dss, encoder->dest_layout[i].extents,
+        rc = dss_extent_insert(dss, encoder->dest_layout[i].extents,
                                encoder->dest_layout[i].ext_count,
                                DSS_SET_FULL_INSERT);
         if (rc)
             LOG_RETURN(rc, "Error while saving extents for objid: '%s'",
                        xfer->xd_targets[i].xt_objid);
 
-        rc = dss_layout_insert(&pho->dss, &encoder->dest_layout[i], 1);
+        rc = dss_layout_insert(dss, &encoder->dest_layout[i], 1);
         if (rc) {
             pho_error(rc, "Error while saving layout for objid: '%s'",
                       xfer->xd_targets[i].xt_objid);
@@ -1351,7 +1351,7 @@ static int store_end_encoder_xfer(struct phobos_handle *pho,
             for (int j = 0; j < encoder->dest_layout[i].ext_count; ++j)
                 encoder->dest_layout[i].extents[j].state = PHO_EXT_ST_ORPHAN;
 
-            rc2 = dss_extent_update(&pho->dss, encoder->dest_layout[i].extents,
+            rc2 = dss_extent_update(dss, encoder->dest_layout[i].extents,
                                     encoder->dest_layout[i].extents,
                                     encoder->dest_layout[i].ext_count);
             if (rc2)
@@ -1367,7 +1367,7 @@ static int store_end_encoder_xfer(struct phobos_handle *pho,
             .copy_status = PHO_COPY_STATUS_COMPLETE,
         };
 
-        rc2 = dss_copy_update(&pho->dss, &copy, &copy, 1,
+        rc2 = dss_copy_update(dss, &copy, &copy, 1,
                               DSS_COPY_UPDATE_COPY_STATUS);
         if (rc2)
             LOG_RETURN(rc2, "Error while updating copy status to complete");
@@ -1435,13 +1435,14 @@ static int store_end_rebuilder_xfer(struct phobos_handle *pho,
 {
     struct layout_info *new_layout = rebuilder->dest_layout;
     struct layout_info *src_layout = rebuilder->src_layout;
+    struct dss_handle *dss = pho_context_get_dss_handle();
     struct layout_info missing_layout = *new_layout;
     struct layout_info final_layout = {0};
     struct copy_info copy = {0};
     GArray *missing_extents;
     int rc;
 
-    rc = dss_extent_insert(&pho->dss, new_layout->extents,
+    rc = dss_extent_insert(dss, new_layout->extents,
                            new_layout->ext_count, DSS_SET_FULL_INSERT);
     if (rc)
         LOG_RETURN(rc, "Error while saving rebuilt extents for objid: '%s'",
@@ -1458,7 +1459,7 @@ static int store_end_rebuilder_xfer(struct phobos_handle *pho,
              * a replacement, so migrate the layout reference from the old
              * extent to the rebuilt one and orphan the old extent, like repack.
              */
-            rc = dss_update_extent_migrate(&pho->dss, old_extent->uuid,
+            rc = dss_update_extent_migrate(dss, old_extent->uuid,
                                            new_extent->uuid);
             if (rc) {
                 g_array_free(missing_extents, TRUE);
@@ -1477,7 +1478,7 @@ static int store_end_rebuilder_xfer(struct phobos_handle *pho,
         missing_layout.ext_count = missing_extents->len;
         missing_layout.extents = (struct extent *)missing_extents->data;
 
-        rc = dss_layout_insert(&pho->dss, &missing_layout, 1);
+        rc = dss_layout_insert(dss, &missing_layout, 1);
         if (rc) {
             g_array_free(missing_extents, TRUE);
             LOG_RETURN(rc, "Error while saving rebuilt layout for objid: '%s'",
@@ -1498,7 +1499,7 @@ static int store_end_rebuilder_xfer(struct phobos_handle *pho,
         LOG_RETURN(rc, "Failed to compute rebuilt copy status for objid: '%s'",
                    xfer->xd_targets->xt_objid);
 
-    rc = dss_copy_update(&pho->dss, &copy, &copy, 1,
+    rc = dss_copy_update(dss, &copy, &copy, 1,
                          DSS_COPY_UPDATE_COPY_STATUS);
     if (rc)
         LOG_RETURN(rc, "Error while updating rebuilt copy status to %s",
@@ -1523,7 +1524,7 @@ static int store_end_decoder_xfer(struct phobos_handle *pho,
         LOG_RETURN(rc,
                    "Error while retrieving current time, will skip access time update");
 
-    rc = dss_copy_update(&pho->dss, &copy, &copy, 1,
+    rc = dss_copy_update(pho_context_get_dss_handle(), &copy, &copy, 1,
                          DSS_COPY_UPDATE_ACCESS_TIME);
     if (rc)
         pho_error(rc, "Error while updating copy access time");
@@ -1556,6 +1557,7 @@ static bool success_on_partial_put(struct pho_xfer_desc *xfer)
 static void store_end_xfer(struct phobos_handle *pho, size_t xfer_idx, int rc)
 {
     struct pho_data_processor *proc = &pho->processors[xfer_idx];
+    struct dss_handle *dss = pho_context_get_dss_handle();
     struct pho_xfer_desc *xfer = &pho->xfers[xfer_idx];
     bool update_partial_put;
     int i;
@@ -1609,7 +1611,7 @@ cont:
             xfer->xd_op == PHO_XFER_OP_PUT && xfer->xd_rc) {
         for (i = 0; i < xfer->xd_ntargets; i++)
             if (xfer->xd_targets[i].xt_rc)
-                object_md_del(&pho->dss, &xfer->xd_targets[i],
+                object_md_del(dss, &xfer->xd_targets[i],
                               xfer->xd_params.put.copy_name);
     }
 
@@ -1624,7 +1626,7 @@ cont:
             copy.version = xfer->xd_targets[i].xt_version;
             copy.copy_name = xfer->xd_params.copy.put.copy_name;
 
-            rc2 = dss_copy_delete(&pho->dss, &copy, 1);
+            rc2 = dss_copy_delete(dss, &copy, 1);
             if (rc2) {
                 pho_error(rc2, "dss_copy_delete failed for objuuid:'%s'",
                           xfer->xd_targets[i].xt_objuuid);
@@ -1681,8 +1683,6 @@ static void store_fini(struct phobos_handle *pho, int rc)
     rc = pho_comm_close(&pho->comm);
     if (rc)
         pho_error(rc, "Cannot close the communication socket");
-
-    dss_fini(&pho->dss);
 }
 
 /**
@@ -1734,11 +1734,6 @@ static int store_init(struct phobos_handle *pho, struct pho_xfer_desc *xfers,
 
     sock_addr.af_unix.path = PHO_CFG_GET(cfg_store, PHO_CFG_STORE, lrs_socket);
 
-    /* Connect to the DSS */
-    rc = dss_init(&pho->dss);
-    if (rc != 0)
-        return rc;
-
     /* Connect to the LRS */
     rc = pho_comm_open(&pho->comm, &sock_addr, PHO_COMM_UNIX_CLIENT);
     if (rc)
@@ -1761,7 +1756,8 @@ static int store_init(struct phobos_handle *pho, struct pho_xfer_desc *xfers,
         pho_debug("Initializing %s %ld for %d objid(s)",
                   processor_type2str(&pho->processors[i]), i,
                   pho->xfers[i].xd_ntargets);
-        rc2 = init_enc_or_dec(&pho->processors[i], &pho->dss, &pho->xfers[i]);
+        rc2 = init_enc_or_dec(&pho->processors[i], pho_context_get_dss_handle(),
+                              &pho->xfers[i]);
         if (rc2) {
             pho_error(rc2, "Error while creating processors for %d objid(s)",
                       pho->xfers[i].xd_ntargets);
@@ -1882,6 +1878,7 @@ static int store_dispatch_loop(struct phobos_handle *pho)
  */
 static int store_perform_xfers(struct phobos_handle *pho)
 {
+    struct dss_handle *dss = pho_context_get_dss_handle();
     size_t i, j;
     int rc = 0;
 
@@ -1906,7 +1903,7 @@ static int store_perform_xfers(struct phobos_handle *pho)
                                   PHO_XFER_COPY_HARD_DEL))
                 continue;
 
-            rc2 = object_delete(&pho->dss, xfer->xd_targets);
+            rc2 = object_delete(dss, xfer->xd_targets);
             if (rc2)
                 pho_error(rc2, "Error while deleting objid: '%s'",
                           xfer->xd_targets->xt_objid);
@@ -1914,7 +1911,7 @@ static int store_perform_xfers(struct phobos_handle *pho)
             store_end_xfer(pho, i, rc2);
             break;
         case PHO_XFER_OP_UNDEL:
-            rc2 = object_undelete(&pho->dss, xfer->xd_targets);
+            rc2 = object_undelete(dss, xfer->xd_targets);
             if (rc2)
                 pho_error(rc2, "Error while undeleting oid: '%s', uuid: '%s'",
                           xfer->xd_targets->xt_objid ?
@@ -1926,7 +1923,7 @@ static int store_perform_xfers(struct phobos_handle *pho)
             break;
         case PHO_XFER_OP_PUT:
             for (j = 0; j < xfer->xd_ntargets; j++) {
-                rc2 = object_md_save(&pho->dss, &xfer->xd_targets[j],
+                rc2 = object_md_save(dss, &xfer->xd_targets[j],
                                      xfer->xd_params.put.overwrite,
                                      xfer->xd_params.put.grouping,
                                      xfer->xd_params.put.copy_name);
@@ -1954,7 +1951,7 @@ static int store_perform_xfers(struct phobos_handle *pho)
                 copy.copy_status = PHO_COPY_STATUS_INCOMPLETE;
                 copy.copy_name = xfer->xd_params.copy.put.copy_name;
 
-                rc2 = dss_copy_insert(&pho->dss, &copy, 1);
+                rc2 = dss_copy_insert(dss, &copy, 1);
                 if (rc2) {
                     pho_error(rc2, "Cannot insert copy");
                     rc = rc ? : rc2;
@@ -2684,10 +2681,10 @@ int phobos_copy_rebuild(struct pho_xfer_desc *xfers, size_t num_xfers)
 
 int phobos_rename(const char *old_oid, const char *uuid, const char *new_oid)
 {
+    struct dss_handle *dss = pho_context_get_dss_handle();
     struct object_info *deprec_objects = NULL;
     struct object_info *objects = NULL;
     struct dss_filter filter;
-    struct dss_handle dss;
     int deprec_count = 0;
     int scope;
     int rc;
@@ -2697,17 +2694,12 @@ int phobos_rename(const char *old_oid, const char *uuid, const char *new_oid)
     if (rc && rc != -EALREADY)
         LOG_GOTO(clean, rc, "Cannot init access to local config parameters");
 
-    /* Connect to the DSS */
-    rc = dss_init(&dss);
-    if (rc)
-        LOG_GOTO(clean, rc, "Cannot initialize a connection handle");
-
     if (uuid == NULL)
         scope = DSS_OBJ_ALIVE;
     else
         scope = DSS_OBJ_ALL;
 
-    rc = dss_find_object(&dss, old_oid, uuid, 0, scope, &objects);
+    rc = dss_find_object(dss, old_oid, uuid, 0, scope, &objects);
     if (rc)
         LOG_GOTO(clean, rc, "Cannot find '%s'", old_oid);
 
@@ -2719,7 +2711,7 @@ int phobos_rename(const char *old_oid, const char *uuid, const char *new_oid)
         LOG_GOTO(clean, rc,
                  "Cannot build filter for object oid '%s'", old_oid);
 
-    rc = dss_deprecated_object_get(&dss, &filter,
+    rc = dss_deprecated_object_get(dss, &filter,
                                    &deprec_objects, &deprec_count, NULL);
     dss_filter_free(&filter);
     if (rc)
@@ -2732,7 +2724,7 @@ int phobos_rename(const char *old_oid, const char *uuid, const char *new_oid)
                  "Couldn't find objects with uuid '%s' to rename", uuid);
 
     /* Rename object */
-    rc = dss_object_rename(&dss, objects, objects == NULL ? 0 : 1,
+    rc = dss_object_rename(dss, objects, objects == NULL ? 0 : 1,
                            deprec_objects, deprec_count, new_oid);
     if (rc)
         LOG_GOTO(clean, rc,
@@ -2748,8 +2740,6 @@ clean:
 
     if (old_oid)
         uuid = NULL;
-
-    dss_fini(&dss);
 
     return rc;
 }
@@ -2817,11 +2807,11 @@ int phobos_locate(const char *oid, const char *uuid, int version,
                   const char *focus_host, const char *copy_name,
                   char **hostname, int *nb_new_lock)
 {
+    struct dss_handle *dss = pho_context_get_dss_handle();
     struct object_info *obj = NULL;
     struct copy_info *copy = NULL;
     struct layout_info *layout;
     struct dss_filter filter;
-    struct dss_handle dss;
     int cnt;
     int rc;
 
@@ -2835,18 +2825,13 @@ int phobos_locate(const char *oid, const char *uuid, int version,
     if (rc && rc != -EALREADY)
         return rc;
 
-    /* Connect to the DSS */
-    rc = dss_init(&dss);
-    if (rc)
-        return rc;
-
     /* find object */
-    rc = dss_lazy_find_object(&dss, oid, uuid, version, &obj);
+    rc = dss_lazy_find_object(dss, oid, uuid, version, &obj);
     if (rc)
         LOG_GOTO(clean, rc, "Unable to find object to locate");
 
     /* find default copy */
-    rc = dss_lazy_find_copy(&dss, obj->uuid, obj->version, copy_name, &copy);
+    rc = dss_lazy_find_copy(dss, obj->uuid, obj->version, copy_name, &copy);
     if (rc)
         LOG_GOTO(clean, rc,
                  "Unable to find the copy of the object to locate");
@@ -2864,7 +2849,7 @@ int phobos_locate(const char *oid, const char *uuid, int version,
                  "Unable to build filter oid %s uuid %s version %d to get "
                  "layout from extent", obj->oid, obj->uuid, obj->version);
 
-    rc = dss_full_layout_get(&dss, &filter, NULL, &layout, &cnt, NULL);
+    rc = dss_full_layout_get(dss, &filter, NULL, &layout, &cnt, NULL);
     dss_filter_free(&filter);
     if (rc)
         GOTO(clean, rc);
@@ -2883,13 +2868,13 @@ int phobos_locate(const char *oid, const char *uuid, int version,
     }
 
     /* locate media */
-    rc = layout_locate(&dss, layout, focus_host, hostname, nb_new_lock);
+    rc = layout_locate(dss, layout, focus_host, hostname, nb_new_lock);
     dss_res_free(layout, cnt);
 
 clean:
     copy_info_free(copy);
     object_info_free(obj);
-    dss_fini(&dss);
+
     return rc;
 }
 
