@@ -22,7 +22,8 @@
 # test phobos put in multithreaded context
 
 test_bin_dir=$PWD
-test_bin="$test_bin_dir/test_multithread"
+test_monoput_bin="$test_bin_dir/test_multithread"
+test_multiput_bin="$test_bin_dir/test_multithread_multiput"
 test_dir=$(dirname $(readlink -e $0))
 . $test_dir/test_env.sh
 . $test_dir/setup_db.sh
@@ -60,10 +61,18 @@ function cleanup()
 
 function test_8put()
 {
+    local put_type=$1
     local args=
     for i in {0..7}; do args="${args} ${FILES[i]} obj${i}"; done
 
-    $LOG_COMPILER $test_bin ${args}
+    if [ "$put_type" = "mono" ]; then
+        $LOG_COMPILER $test_monoput_bin ${args}
+    elif [ "$put_type" = "multi" ]; then
+        $LOG_COMPILER $test_multiput_bin ${args}
+    else
+        error "Parameter '$put_type' not recognized"
+    fi
+
 
     if [[ $($phobos object list | wc -l) != 8 ]]; then
         error "8 objects should have been added to phobos"
@@ -71,7 +80,8 @@ function test_8put()
 }
 
 TESTS=(
-    "setup; test_8put; cleanup"
+    "setup; test_8put mono; cleanup"
+    "setup; test_8put multi; cleanup"
 )
 
 # -*- mode: c; c-basic-offset: 4; indent-tabs-mode: nil; -*-

@@ -44,6 +44,7 @@ check_PROGRAMS=phobos_put_copy \
                test_lock_vs_release \
                test_mput_sync_error \
                test_multithread \
+               test_multithread_multiput \
                test_raid1_split_locate \
                test_scsi \
                test_stats \
@@ -123,6 +124,11 @@ test_multithread_SOURCES=test_multithread.c
 test_multithread_LDADD=$(STORE_LIB) $(TESTS_LIB) $(TESTS_LIB_DEPS)
 test_multithread_LDFLAGS=-pthread
 test_multithread_CFLAGS=$(TESTS_INCLUDE)
+
+test_multithread_multiput_SOURCES=test_multithread_multiput.c
+test_multithread_multiput_LDADD=$(STORE_LIB) $(TESTS_LIB) $(TESTS_LIB_DEPS)
+test_multithread_multiput_LDFLAGS=-pthread
+test_multithread_multiput_CFLAGS=$(TESTS_INCLUDE)
 
 if RADOS_ENABLED
 test_lib_dev_rados_SOURCES=test_lib_dev_rados.c
