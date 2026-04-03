@@ -89,6 +89,7 @@ class Client: # pylint: disable=too-many-public-methods
         if self.handle is not None:
             self.fini()
 
+        LIBPHOBOS.phobos_init()
         self.handle = AdminHandle()
         phobos_context_func = LIBPHOBOS.phobos_context
         phobos_context_func.restype = c_void_p
@@ -104,6 +105,7 @@ class Client: # pylint: disable=too-many-public-methods
         """Admin client finalization."""
         if self.handle is not None:
             LIBPHOBOS_ADMIN.phobos_admin_fini(byref(self.handle))
+            LIBPHOBOS.phobos_fini()
             self.handle = None
 
     def fs_format(self, media_list, rsc_family, library, nb_streams, fs_type, # pylint: disable=too-many-arguments

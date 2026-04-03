@@ -29,6 +29,9 @@ import os
 
 from phobos.core.ffi import (LIBPHOBOS, ResourceFamily)
 
+# Put this in a CFG class, like Store/Admin Clients
+LIBPHOBOS.phobos_init()
+
 def load_file(path=None):
     """Load a configuration file from path"""
     ret = LIBPHOBOS.pho_cfg_init_local(path.encode('utf-8') if path else None)

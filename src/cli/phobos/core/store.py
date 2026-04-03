@@ -569,6 +569,10 @@ class Store:
         # called by the underlying C code, so that they do not get GC'd
         self.logger = logging.getLogger(__name__)
         self._cb = None
+        LIBPHOBOS.phobos_init()
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        LIBPHOBOS.phobos_fini()
 
     @staticmethod
     def xfer_desc_convert(xfer_descriptors):
@@ -707,6 +711,10 @@ class UtilClient:
         """Initialize a new instance."""
         super().__init__(**kwargs)
         self.logger = logging.getLogger(__name__)
+        LIBPHOBOS.phobos_init()
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        LIBPHOBOS.phobos_fini()
 
     @staticmethod
     def object_delete(oids, uuid, version, del_params, hard_delete):
