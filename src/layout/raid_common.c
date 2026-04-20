@@ -288,7 +288,9 @@ static struct raid_io_context *io_context_from_proc(
     return &((struct raid_io_context *)proc->private_eraser)[target_idx];
 }
 
-struct pho_ext_loc make_ext_location(struct pho_data_processor *proc, size_t i,
+struct pho_ext_loc make_ext_location(struct pho_data_processor *proc,
+                                     size_t alloc_medium_index,
+                                     size_t context_or_layout_ext_index,
                                      int target_idx, enum processor_type type)
 {
     struct raid_io_context *io_context = io_context_from_proc(proc, target_idx,
@@ -296,18 +298,24 @@ struct pho_ext_loc make_ext_location(struct pho_data_processor *proc, size_t i,
     struct pho_ext_loc loc;
 
     if (type == PHO_PROC_ENCODER) {
-        loc.root_path = proc->write_resp->walloc->media[i]->root_path;
-        loc.addr_type = proc->write_resp->walloc->media[i]->addr_type;
-        loc.extent = &io_context->write.extents[i];
+        loc.root_path =
+            proc->write_resp->walloc->media[alloc_medium_index]->root_path;
+        loc.addr_type =
+            proc->write_resp->walloc->media[alloc_medium_index]->addr_type;
+        loc.extent = &io_context->write.extents[context_or_layout_ext_index];
     } else if (type == PHO_PROC_DECODER) {
-        loc.root_path = io_context->read.resp->ralloc->media[i]->root_path;
-        loc.addr_type = io_context->read.resp->ralloc->media[i]->addr_type;
-        loc.extent = io_context->read.extents[i];
+        loc.root_path =
+            io_context->read.resp->ralloc->media[alloc_medium_index]->root_path;
+        loc.addr_type =
+            io_context->read.resp->ralloc->media[alloc_medium_index]->addr_type;
+        loc.extent = io_context->read.extents[context_or_layout_ext_index];
     } else {
         /* PHO_PROC_ERASER */
-        loc.root_path = io_context->delete.resp->media[i]->root_path;
-        loc.addr_type = io_context->delete.resp->media[i]->addr_type;
-        loc.extent = &proc->src_layout->extents[i];
+        loc.root_path =
+            io_context->delete.resp->media[alloc_medium_index]->root_path;
+        loc.addr_type =
+            io_context->delete.resp->media[alloc_medium_index]->addr_type;
+        loc.extent = &proc->src_layout->extents[context_or_layout_ext_index];
     }
 
     return loc;
@@ -322,7 +330,7 @@ static int raid_io_context_open(struct raid_io_context *io_context,
     int rc;
 
     for (i = 0; i < count; ++i) {
-        struct pho_ext_loc ext_location = make_ext_location(proc, i,
+        struct pho_ext_loc ext_location = make_ext_location(proc, i, i,
                                                             target_idx, type);
         struct pho_io_descr *iod = &io_context->iods[i];
 
@@ -466,6 +474,26 @@ static struct extent *extent_from_layout_idx(struct extent *extents,
     return NULL;
 }
 
+/** Number of extent in src layout corresponding to the current split */
+static size_t current_split_src_layout_n_extent(struct pho_data_processor *proc,
+                                                enum processor_type type)
+{
+    struct raid_io_context *io_context =
+        io_context_from_proc(proc, proc->current_target, type);
+    size_t n_extents_per_split = n_total_extents(io_context);
+    size_t n_extent = 0;
+    int idx;
+
+    for (idx = io_context->current_split * n_extents_per_split;
+         idx < (io_context->current_split + 1) * n_extents_per_split;
+         idx++)
+        if (extent_from_layout_idx(proc->src_layout->extents,
+                                   proc->src_layout->ext_count, idx))
+            n_extent++;
+
+    return n_extent;
+}
+
 /** Generate the next read or delete allocation request for this eraser */
 static void raid_reader_eraser_build_allocation_req(
     struct pho_data_processor *proc, pho_req_t *req, enum processor_type type)
@@ -479,15 +507,7 @@ static void raid_reader_eraser_build_allocation_req(
 
     ENTRY;
 
-    /* count existing extent for the current split */
-    for (layout_idx = io_context->current_split * n_extents_per_split;
-         layout_idx < (io_context->current_split + 1) * n_extents_per_split;
-         layout_idx++) {
-        if (extent_from_layout_idx(proc->src_layout->extents,
-                                   proc->src_layout->ext_count, layout_idx))
-            current_split_n_extents++;
-    }
-
+    current_split_n_extents = current_split_src_layout_n_extent(proc, type);
     if (is_decoder(proc) || is_copier(proc))
         assert(current_split_n_extents >= io_context->n_data_extents);
 
@@ -605,14 +625,18 @@ static void raid_io_add_written_extent(struct raid_io_context *io_context,
     memset(extent, 0, sizeof(*extent));
 }
 
+/* return the index of the extent corresponding to medium or -1 */
 static ssize_t extent_index(struct layout_info *layout,
                             const pho_rsc_id_t *medium,
-                            size_t extent_index_start, size_t extent_index_end)
+                            int first_layout_index,
+                            int first_excluded_layout_index)
 {
-    size_t i;
+    int i;
 
-    for (i = extent_index_start; i < extent_index_end; i++) {
-        if (!strcmp(layout->extents[i].media.name, medium->name) &&
+    for (i = 0; i < layout->ext_count; i++) {
+        if (layout->extents[i].layout_idx >= first_layout_index &&
+            layout->extents[i].layout_idx < first_excluded_layout_index &&
+            !strcmp(layout->extents[i].media.name, medium->name) &&
             !strcmp(layout->extents[i].media.library, medium->library))
             return i;
     }
@@ -857,8 +881,12 @@ static int raid_reader_split_setup(struct pho_data_processor *proc,
         if (rc)
             return rc;
 
-        ext_index = extent_index(proc->src_layout, medium[i]->med_id, 0,
-                                 proc->src_layout->ext_count);
+        ext_index = extent_index(
+            proc->src_layout,
+            medium[i]->med_id,
+            io_context->current_split * n_total_extents(io_context),
+            (io_context->current_split + 1) * n_total_extents(io_context));
+
         if (ext_index == -1)
             LOG_RETURN(-ENOMEDIUM,
                        "Did not find medium '%s':'%s' in reader layout of '%s'",
@@ -1609,10 +1637,13 @@ static int raid_eraser_handle_release_resp(struct pho_data_processor *proc,
     struct raid_io_context *io_context = proc->private_eraser;
     size_t n_extents = n_total_extents(io_context);
 
-    if (resp->release->n_med_ids != n_extents)
+    if (resp->release->n_med_ids !=
+        current_split_src_layout_n_extent(proc, PHO_PROC_ERASER))
         LOG_RETURN(-EINVAL,
                    "Eraser release unexpected number of media. Expected %lu, "
-                   "got %lu", n_extents, resp->release->n_med_ids);
+                   "got %lu",
+                   current_split_src_layout_n_extent(proc, PHO_PROC_ERASER),
+                   resp->release->n_med_ids);
 
     for (int i = 0; i < resp->release->n_med_ids; ++i) {
         ssize_t ext_index;
@@ -1620,8 +1651,7 @@ static int raid_eraser_handle_release_resp(struct pho_data_processor *proc,
         ext_index = extent_index(proc->src_layout,
                                  resp->release->med_ids[i],
                                  n_extents * io_context->current_split,
-                                 n_extents *
-                                     (io_context->current_split + 1));
+                                 n_extents * (io_context->current_split + 1));
         if (ext_index == -1)
             LOG_RETURN(-ENOMEDIUM,
                        "Did not find in hard delete release resp medium "
@@ -1633,10 +1663,14 @@ static int raid_eraser_handle_release_resp(struct pho_data_processor *proc,
         io_context->delete.to_delete--;
     }
 
-    io_context->current_split++;
-
-    if (io_context->delete.to_delete == 0)
+    if (io_context->delete.to_delete == 0) {
         proc->current_target++;
+        io_context->current_split = 0;
+    } else {
+        io_context->current_split++;
+        while (current_split_src_layout_n_extent(proc, PHO_PROC_ERASER) == 0)
+            io_context->current_split++;
+    }
 
     if (proc->current_target == proc->xfer->xd_ntargets) {
             proc->done = true;
@@ -1661,6 +1695,10 @@ int raid_eraser_processor_step(struct pho_data_processor *proc,
 
     /* first init step from the data processor: return first allocation */
     if (!resp) {
+        /* move to next split if no extent to delete in current one */
+        while (current_split_src_layout_n_extent(proc, PHO_PROC_ERASER) == 0)
+            io_context->current_split++;
+
         *reqs = xcalloc(1, sizeof(**reqs));
         *n_reqs = 1;
         raid_reader_eraser_build_allocation_req(proc, *reqs, PHO_PROC_ERASER);
@@ -1690,9 +1728,12 @@ int raid_eraser_processor_step(struct pho_data_processor *proc,
                    processor_type2str(proc), resp->req_id);
     }
 
-    if (resp->ralloc->n_media != n_extents)
+    if (resp->ralloc->n_media !=
+        current_split_src_layout_n_extent(proc, PHO_PROC_ERASER))
         LOG_RETURN(-EINVAL, "Eraser unexpected number of media. Expected %lu, "
-                   "got %lu", n_extents, resp->ralloc->n_media);
+                   "got %lu",
+                   current_split_src_layout_n_extent(proc, PHO_PROC_ERASER),
+                   resp->ralloc->n_media);
 
     /* prepare release req with potential next alloc */
     *reqs = xcalloc(1, sizeof(**reqs));
@@ -1727,7 +1768,7 @@ int raid_eraser_processor_step(struct pho_data_processor *proc,
             break;
         }
 
-        loc = make_ext_location(proc, ext_index, proc->current_target,
+        loc = make_ext_location(proc, i, ext_index, proc->current_target,
                                 PHO_PROC_ERASER);
         iod.iod_loc = &loc;
         rc = ioa_del(iod.iod_ioa, &iod);

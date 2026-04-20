@@ -212,8 +212,19 @@ static int decoder_build(struct dss_handle *dss, struct pho_xfer_desc *xfer,
     if (rc)
         GOTO(err, rc);
 
-    if (cnt == 0)
-        GOTO(err, rc = -ENOENT);
+    if (cnt == 0) {
+        if (xfer->xd_op == PHO_XFER_OP_DEL) {
+            /* an eraser could try to remove a copy without any extent */
+            dss_res_free(layout, cnt);
+            decoder->type = PHO_PROC_ERASER;
+            decoder->done = true;
+            decoder->xfer = xfer;
+            decoder->src_layout = NULL;
+            return 0;
+        } else {
+            GOTO(err, rc = -ENOENT);
+        }
+    }
 
     /* @FIXME: duplicate layout to avoid calling dss functions to free this? */
     if (xfer->xd_op == PHO_XFER_OP_GET)
@@ -1069,10 +1080,12 @@ static int init_enc_or_dec(struct pho_data_processor *proc,
     if (rc)
         return rc;
 
-    if (copy->copy_status == PHO_COPY_STATUS_INCOMPLETE) {
+    if (copy->copy_status == PHO_COPY_STATUS_INCOMPLETE &&
+        !(xfer->xd_op == PHO_XFER_OP_DEL &&
+          xfer->xd_flags & (PHO_XFER_OBJ_HARD_DEL | PHO_XFER_COPY_HARD_DEL))) {
         pho_error(rc = -EINVAL,
-                  "Status of copy '%s' for the object '%s' is incomplete, cannot be read",
-                  copy->copy_name, obj->oid);
+                  "Status of copy '%s' for the object '%s' is incomplete, "
+                  "cannot be read", copy->copy_name, obj->oid);
         copy_info_free(copy);
         return rc;
     }
@@ -1109,46 +1122,55 @@ static int store_end_delete_xfer(struct phobos_handle *pho,
                                  struct pho_xfer_desc *xfer,
                                  struct pho_data_processor *proc)
 {
-    struct extent *extents = proc->src_layout->extents;
-    int ext_count = proc->src_layout->ext_count;
     struct dss_handle *dss = &pho->dss;
     struct copy_info copy = {
         .object_uuid = xfer->xd_targets->xt_objuuid,
         .version = xfer->xd_targets->xt_version,
-        .copy_name = proc->src_layout->copy_name,
+        .copy_name = NULL,
     };
     struct object_info obj = {
         .oid = xfer->xd_targets->xt_objid,
         .uuid = xfer->xd_targets->xt_objuuid,
         .version = xfer->xd_targets->xt_version,
     };
+    struct extent *extents = NULL;
     bool medium_is_tape;
+    int ext_count = 0;
     int rc;
     int i;
 
-    medium_is_tape = ext_count != 0 ?
-        extents[0].media.family == PHO_RSC_TAPE :
-        false;
+    /* no layout : deleting with no existing extent */
+    if (!proc->src_layout) {
+        assert(xfer->xd_op == PHO_XFER_OP_DEL);
+        copy.copy_name = xfer->xd_params.delete.copy_name;
+    } else {
+        extents = proc->src_layout->extents;
+        ext_count = proc->src_layout->ext_count;
+        copy.copy_name = proc->src_layout->copy_name;
+        medium_is_tape = ext_count != 0 ?
+            extents[0].media.family == PHO_RSC_TAPE :
+            false;
 
-    rc = dss_layout_delete(dss, proc->src_layout, 1);
-    if (rc)
-        LOG_RETURN(rc, "Unable to delete layouts for object '%s:%d'",
-                   obj.uuid, obj.version);
+        rc = dss_layout_delete(dss, proc->src_layout, 1);
+        if (rc)
+            LOG_RETURN(rc, "Unable to delete layouts for object '%s:%d'",
+                       obj.uuid, obj.version);
 
-    if (ext_count > 0) {
-        if (medium_is_tape) {
-            for (i = 0; i < ext_count; ++i)
-                extents[i].state = PHO_EXT_ST_ORPHAN;
-            rc = dss_extent_update(dss, extents, extents, ext_count);
-        } else {
-            rc = dss_extent_delete(dss, extents, ext_count);
+        if (ext_count > 0) {
+            if (medium_is_tape) {
+                for (i = 0; i < ext_count; ++i)
+                    extents[i].state = PHO_EXT_ST_ORPHAN;
+                rc = dss_extent_update(dss, extents, extents, ext_count);
+            } else {
+                rc = dss_extent_delete(dss, extents, ext_count);
+            }
         }
-    }
 
-    if (rc)
-        LOG_RETURN(rc, "Unable to %s object '%s:%d' extents",
-                   medium_is_tape ? "update" : "delete",
-                   obj.uuid, obj.version);
+        if (rc)
+            LOG_RETURN(rc, "Unable to %s object '%s:%d' extents",
+                       medium_is_tape ? "update" : "delete",
+                       obj.uuid, obj.version);
+    }
 
     rc = dss_copy_delete(dss, &copy, 1);
     if (rc)

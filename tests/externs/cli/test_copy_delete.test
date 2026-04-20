@@ -26,6 +26,7 @@ test_dir=$(dirname $(readlink -e $0))
 . $test_dir/setup_db.sh
 . $test_dir/test_launch_daemon.sh
 . $test_dir/tape_drive.sh
+. $test_dir/utils_generation.sh
 
 ################################################################################
 #                                    SETUP                                     #
@@ -111,8 +112,30 @@ function cleanup
     rm -rf ${DIRS[@]}
 }
 
+function setup_dir
+{
+    setup_tables
+    invoke_lrs
+
+    setup_test_dirs
+    # one file bigger than 1M
+    setup_dummy_files 1 1k 1025
+}
+
+function cleanup_dir
+{
+    waive_lrs
+    for dir in ${media[@]}; do
+        cleanup_tmp_fs ${dir}
+    done
+
+    cleanup_dummy_files
+    cleanup_test_dirs
+    drop_tables
+}
+
 ################################################################################
-#                              TEST COPY CREATE                                #
+#                              TEST COPY DELETE                                #
 ################################################################################
 
 function test_copy_delete_raid1()
@@ -321,7 +344,161 @@ function test_copy_delete_deprec_only()
     check_extents "$uuid_gen1,1" "" 1
 }
 
-TESTS=("setup_raid1; test_copy_delete_raid1; cleanup"
+function removed_add_to_media
+{
+    local removed_medium=$1
+
+    waive_lrs
+    $phobos dir delete --lost ${removed_medium} ||
+        error "Dir delete should success"
+
+    # Removed medium from media
+    for i in "${!media[@]}"; do
+        if [[ "${media[i]}" == "${removed_medium}" ]]; then
+            unset media[$i]
+            break
+        fi
+    done
+
+    media=("${media[@]}")
+
+    # clean removed medium
+    cleanup_tmp_fs ${removed_medium}
+
+    # add a new medium
+    new_medium="$(make_tmp_fs 1M)"
+    media+=("${new_mediuma}")
+    $phobos dir add --tags copy ${new_medium} ||
+        error "Dir add should success"
+    invoke_lrs
+    $phobos dir format --unlock ${new_medium} ||
+        error "Dir format should success"
+}
+
+function test_copy_deleted_dir_incomplete() {
+    local obj_media="$DIR_TEST_IN/tmp1"
+    local copy_count
+    local ext_count
+    local obj_media
+
+    mkdir ${obj_media}
+    $phobos dir add --tags obj ${obj_media}
+    $phobos dir format --unlock ${obj_media}
+
+    # 4 dirs for copy raid1 repl_count=2
+    media=(
+        $(make_tmp_fs 1M)
+        $(make_tmp_fs 1M)
+        $(make_tmp_fs 1M)
+        $(make_tmp_fs 1M)
+    )
+    $phobos dir add --tags copy ${media[@]}
+    $phobos dir format --unlock ${media[@]}
+
+    $phobos put -f dir --tags obj --layout raid1 --lyt-params "repl_count=1" \
+        ${FILES[0]} obj || error "Put should success"
+
+    # delete raid1 copy incomplete with only one lacking extent
+    # extent 0 split 0
+    # extent 1 split 0
+    # extent 0 split 1
+    # extent 1 split 1
+    for ext_idx in 0 1 2 3; do
+        echo "test delete raid1 copy incomplete without ext_idx ${ext_idx}"
+        $phobos copy create -f dir --tags copy --layout raid1 \
+            --lyt-params "repl_count=2" obj copy ||
+                error "Copy create should success"
+
+
+        obj_media=($($phobos extent list -f json -o media_name -c copy obj | \
+                     jq -r ".[0].media_name[]"))
+        removed_add_to_media ${obj_media[${ext_idx}]}
+
+        $valg_phobos copy delete obj copy ||
+            error "Dir extent ${ext_idx} lacking copy deletion should success"
+
+        copy_count="$($phobos copy list | wc -l)"
+        ((copy_count == 1)) || error "1 copy should remain"
+        ext_count="$($phobos extent list --degroup -o address | wc -l)"
+        ((ext_count == 1)) || error "1 extent should remain"
+    done
+
+    # delete raid1 copy incomplete with two lacking extents
+    for ext_idx in 0 1 2; do
+        for ext_idx_bis in `seq $((ext_idx + 1)) 3`; do
+            $phobos copy create -f dir --tags copy --layout raid1 \
+                --lyt-params "repl_count=2" obj copy || \
+                    error "Copy create should success"
+
+            obj_media=($($phobos extent list -f json -o media_name -c copy \
+                             obj | jq -r ".[0].media_name[]"))
+            removed_add_to_media ${obj_media[${ext_idx_bis}]}
+            removed_add_to_media ${obj_media[${ext_idx}]}
+
+            $valg_phobos copy delete obj copy ||
+                error "Dir extents ${ext_idx} and ${ext_idx_bis} lacking" \
+                      "copy deletion should success"
+
+            copy_count="$($phobos copy list | wc -l)"
+            ((copy_count == 1)) || error "1 copy should remain"
+            ext_count="$($phobos extent list --degroup -o address | wc -l)"
+            ((ext_count == 1)) || error "1 extent should remain"
+        done
+    done
+
+    # delete raid1 copy incomplete with three lacking extents
+    for ext_idx in 0 1 2 3; do
+        $phobos copy create -f dir --tags copy --layout raid1 \
+            --lyt-params "repl_count=2" obj copy ||
+                error "Copy create should success"
+
+        obj_media=($($phobos extent list -f json -o media_name -c copy obj | \
+                     jq -r ".[0].media_name[]"))
+        for delete_idx in 3 2 1 0; do
+            if ((delete_idx == ext_idx)); then
+                continue
+            else
+                removed_add_to_media ${obj_media[${delete_idx}]}
+            fi
+        done
+
+        $valg_phobos copy delete obj copy ||
+            error "Dir 3 extents lacking, only ${ext_idx} staying," \
+                  "copy deletion should success"
+
+        copy_count="$($phobos copy list | wc -l)"
+        ((copy_count == 1)) || error "1 copy should remain"
+        ext_count="$($phobos extent list --degroup -o address | wc -l)"
+        ((ext_count == 1)) || error "1 extent should remain"
+    done
+
+    # delete raid1 copy incomplete without any extents
+    $phobos copy create -f dir --tags copy --layout raid1 \
+        --lyt-params "repl_count=2" obj copy ||
+            error "Copy create should success"
+
+    waive_lrs
+
+    obj_media=($($phobos extent list -f json -o media_name -c copy obj | \
+                 jq -r ".[0].media_name[]"))
+    for delete_idx in 0 1 2 3; do
+        $phobos dir delete --lost ${obj_media[${delete_idx}]} ||
+            error "Dir delete should success"
+    done
+
+    invoke_lrs
+
+    $valg_phobos copy delete obj copy ||
+        error "Dir full incomplete copy deletion should success"
+
+    copy_count="$($phobos copy list | wc -l)"
+    ((copy_count == 1)) || error "1 copy should remain"
+    ext_count="$($phobos extent list --degroup -o address | wc -l)"
+    ((ext_count == 1)) || error "1 extent should remain"
+}
+
+TESTS=("setup_dir; test_copy_deleted_dir_incomplete; cleanup_dir"
+       "setup_raid1; test_copy_delete_raid1; cleanup"
        "setup_raid1_repl; test_copy_delete_raid1_repl; cleanup"
        "setup_raid4; test_copy_delete_raid4; cleanup"
        "setup_raid1; test_copy_delete_last; cleanup"
