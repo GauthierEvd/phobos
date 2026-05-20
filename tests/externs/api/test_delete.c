@@ -30,7 +30,9 @@
 
 #include "pho_cfg.h"
 #include "pho_dss.h"
+#include "pho_dss_wrapper.h"
 #include "pho_test_utils.h"
+#include "pho_type_utils.h"
 #include "phobos_store.h"
 
 #define ARRAYSIZE(a) (sizeof(a) / sizeof((a)[0]))
@@ -97,12 +99,198 @@ static bool test_delete_failure(void)
     return true;
 }
 
+static int check_copy_deleted(struct dss_handle *dss, const char *object_oid,
+                              const char *object_uuid, const char *copy_name,
+                              bool *deleted)
+{
+    struct dss_filter copy_filter;
+    struct copy_info *copy_info;
+    int copy_count;
+    int rc;
+
+    rc = dss_filter_build(&copy_filter,
+                          "{\"$AND\": ["
+                              "{\"DSS::COPY::object_uuid\": \"%s\"},"
+                              "{\"DSS::COPY::copy_name\": \"%s\"}"
+                          "]}", object_uuid, copy_name);
+    if (rc) {
+        pho_error(rc,
+                  "Unable to build copy filter for object oid '%s', uuid '%s', "
+                  "copy_name '%s'", object_oid, object_uuid, copy_name);
+        return rc;
+    }
+
+    rc = dss_copy_get(dss, &copy_filter, &copy_info, &copy_count, NULL);
+    dss_filter_free(&copy_filter);
+    if (rc) {
+        pho_error(rc,
+                  "Unable to get copy for object oid '%s', uuid '%s', "
+                  "copy_name '%s'", object_oid, object_uuid, copy_name);
+        return rc;
+    }
+
+    dss_res_free(copy_info, copy_count);
+    if (copy_count)
+        *deleted = false;
+    else
+        *deleted = true;
+
+    return 0;
+}
+
+static int check_object_deleted(struct dss_handle *dss, const char *oid,
+                                const char *uuid, int version, bool *deleted)
+{
+    struct object_info *object_info;
+    int rc;
+
+    rc = dss_find_object(dss, oid, uuid, version, DSS_OBJ_ALL, &object_info);
+    if (rc == -ENOENT) {
+        *deleted = true;
+        return 0;
+    } else if (rc) {
+        return rc;
+    }
+
+    object_info_free(object_info);
+    *deleted = false;
+    return 0;
+}
+
+static bool test_delete_incomplete_copy(void)
+{
+    struct dss_handle dss;
+    bool deleted;
+    int rc;
+
+    rc = phobos_delete_incomplete_copy();
+    if (rc)
+        return false;
+
+    /* check the copies and the objects are deleted */
+    rc = dss_init(&dss);
+    if (rc) {
+        pho_error(rc, "Unable to init dss to check copies");
+        return false;
+    }
+
+    rc = check_copy_deleted(&dss, "1_incomplete_copy",
+                            "00112233445566778899aabbccddeef4", "source",
+                            &deleted);
+    if (rc || !deleted) {
+        if (rc)
+            pho_error(rc,
+                      "Unable to checked the deleted copy 1_incomplete_copy");
+        else
+            pho_warn("1_incomplete_copy copy should be deleted");
+
+        dss_fini(&dss);
+        return false;
+    }
+
+    rc = check_object_deleted(&dss, "1_incomplete_copy",
+                              "00112233445566778899aabbccddeef4", 1, &deleted);
+    if (rc || !deleted) {
+        if (rc)
+            pho_error(rc,
+                      "Unable to checked the deleted object 1_incomplete_copy");
+        else
+            pho_warn("1_incomplete_copy object should be deleted");
+
+        dss_fini(&dss);
+        return false;
+    }
+
+    rc = check_copy_deleted(&dss, "1_complete_copy_1_incomplete_copy",
+                            "00112233445566778899aabbccddeef5", "source",
+                            &deleted);
+    if (rc || deleted) {
+        if (rc)
+            pho_error(rc,
+                      "Unable to checked the 1_complete_copy_1_incomplete_copy "
+                      "source copy");
+        else
+            pho_warn("1_complete_copy_1_incomplete_copy source copy should "
+                     "not be deleted");
+
+        dss_fini(&dss);
+        return false;
+    }
+
+    rc = check_copy_deleted(&dss, "1_complete_copy_1_incomplete_copy",
+                            "00112233445566778899aabbccddeef5", "incomplete",
+                            &deleted);
+    if (rc || !deleted) {
+        if (rc)
+            pho_error(rc,
+                      "Unable to checked the 1_complete_copy_1_incomplete_copy "
+                      "incomplete copy");
+        else
+            pho_warn("1_complete_copy_1_incomplete_copy incomplete copy "
+                     "should be deleted");
+
+        dss_fini(&dss);
+        return false;
+    }
+
+    rc = check_object_deleted(&dss, "1_complete_copy_1_incomplete_copy",
+                              "00112233445566778899aabbccddeef5", 1,
+                              &deleted);
+    if (rc || deleted) {
+        if (rc)
+            pho_error(rc,
+                      "Unable to checked the 1_complete_copy_1_incomplete_copy "
+                      "object");
+        else
+            pho_warn("1_complete_copy_1_incomplete_copy object should not be "
+                     "deleted");
+
+        dss_fini(&dss);
+        return false;
+    }
+
+    rc = check_copy_deleted(&dss, "1_deprecated_incomplete_copy",
+                            "00112233445566778899aabbccddeef6", "source",
+                            &deleted);
+    if (rc || !deleted) {
+        if (rc)
+            pho_error(rc,
+                      "Unable to checked the 1_deprecated_incomplete_copy "
+                      "source copy");
+        else
+            pho_warn("1_deprecated_incomplete_copy incomplete copy should be "
+                     "deleted");
+
+        dss_fini(&dss);
+        return false;
+    }
+
+    rc = check_object_deleted(&dss, "1_deprecated_incomplete_copy",
+                              "00112233445566778899aabbccddeef6", 1,
+                              &deleted);
+    if (rc || !deleted) {
+        if (rc)
+            pho_error(rc,
+                      "Unable to checked the 1_deprecated_incomplete_copy "
+                      "object");
+        else
+            pho_warn("1_deprecated_incomplete_copy object should be deleted");
+
+        dss_fini(&dss);
+        return false;
+    }
+
+    dss_fini(&dss);
+    return true;
+}
+
 int main(void)
 {
     bool (*test_function[])(void) = {
         test_delete_null_list,
         test_delete_success,
         test_delete_failure,
+        test_delete_incomplete_copy,
     };
     struct dss_handle dss_handle;
     bool test_res = true;

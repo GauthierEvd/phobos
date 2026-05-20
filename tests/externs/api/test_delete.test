@@ -40,13 +40,26 @@ function setup
     INSERT INTO object(oid, user_md, object_uuid, version) VALUES
         ('test-oid1', '{}', '00112233445566778899aabbccddeef1', 1),
         ('test-oid2', '{}', '00112233445566778899aabbccddeef2', 1),
-        ('test-oid3', '{}', '00112233445566778899aabbccddeef3', 1);
+        ('test-oid3', '{}', '00112233445566778899aabbccddeef3', 1),
+        ('1_incomplete_copy', '{}', '00112233445566778899aabbccddeef4', 1),
+        ('1_complete_copy_1_incomplete_copy', '{}', \
+         '00112233445566778899aabbccddeef5', 1);
+
+    INSERT INTO deprecated_object(oid, user_md, object_uuid, version) VALUES
+        ('1_deprecated_incomplete_copy', '{}', \
+         '00112233445566778899aabbccddeef6', 1);
+
 
     INSERT INTO copy (object_uuid, version, copy_name, lyt_info,
         copy_status) VALUES
         ('00112233445566778899aabbccddeef1', 1, 'source', '{}', 'complete'),
         ('00112233445566778899aabbccddeef2', 1, 'source', '{}', 'complete'),
-        ('00112233445566778899aabbccddeef3', 1, 'source', '{}', 'complete');
+        ('00112233445566778899aabbccddeef3', 1, 'source', '{}', 'complete'),
+        ('00112233445566778899aabbccddeef4', 1, 'source', '{}', 'incomplete'),
+        ('00112233445566778899aabbccddeef5', 1, 'source', '{}', 'complete'),
+        ('00112233445566778899aabbccddeef5', 1, 'incomplete', '{}', \
+         'incomplete'),
+        ('00112233445566778899aabbccddeef6', 1, 'source', '{}', 'incomplete');
 EOF
 
     invoke_lrs
@@ -60,7 +73,7 @@ function cleanup
 
 function test_delete
 {
-    $LOG_COMPILER $test_bin
+    PHOBOS_STORE_delete_incomplete_delay_second="0" $LOG_COMPILER $test_bin
 }
 
 TEST_SETUP=setup

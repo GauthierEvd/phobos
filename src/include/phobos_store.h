@@ -467,6 +467,17 @@ int phobos_setmd(struct pho_xfer_desc *xfers, size_t num_xfers);
 int phobos_delete(struct pho_xfer_desc *xfers, size_t num_xfers);
 
 /**
+ * Hard delete the incomplete copies located on the current node
+ *
+ * If the deleted incomplete copy was the last of an object, this object is hard
+ * deleted.
+ * All incomplete copies that are located on an other host are skipped.
+ * Copies younger than "current_time - delete_incomplete_delay_second" are
+ * skipped. "delete_incomplete_delay_second" is a config file parameter.
+ */
+int phobos_delete_incomplete_copy(void);
+
+/**
  * Undelete a deprecated object from the object store
  *
  * The latest version of each deprecated object is moved back.

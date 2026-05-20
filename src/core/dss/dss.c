@@ -123,7 +123,7 @@ int dss_init(struct dss_handle *handle)
 
     conn_str = get_connection_string();
     if (conn_str == NULL)
-        return -EINVAL;
+        LOG_RETURN(-EINVAL, "No connection string from config");
 
     handle->dh_conn = PQconnectdb(conn_str);
 

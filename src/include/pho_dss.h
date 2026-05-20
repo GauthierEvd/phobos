@@ -240,6 +240,7 @@ static struct dss_field_def dss_fields_names[] = {
     {"DSS::COPY::copy_status", "copy_status"},
     {"DSS::COPY::object_uuid", "object_uuid"},
     {"DSS::COPY::version", "version"},
+    {"DSS::COPY::creation_time", "creation_time"},
     {NULL, NULL}
 };
 

@@ -56,16 +56,19 @@
  * List of configuration parameters for store
  */
 enum pho_cfg_params_store {
-    PHO_CFG_STORE_FIRST,
+    PHO_CFG_STORE_lrs_socket,
+    PHO_CFG_STORE_delete_incomplete_delay_second,
 
-    /* store parameters */
-    PHO_CFG_STORE_lrs_socket = PHO_CFG_STORE_FIRST,
-
-    PHO_CFG_STORE_LAST
+    PHO_CFG_STORE_FIRST = PHO_CFG_STORE_lrs_socket,
+    PHO_CFG_STORE_LAST = PHO_CFG_STORE_delete_incomplete_delay_second,
 };
 
 const struct pho_config_item cfg_store[] = {
     [PHO_CFG_STORE_lrs_socket] = LRS_SOCKET_CFG_ITEM,
+    [PHO_CFG_STORE_delete_incomplete_delay_second] = {
+        .section = "store",
+        .name = "delete_incomplete_delay_second",
+        .value = "86400" /* 24 hours */}
 };
 
 /**
@@ -2052,6 +2055,316 @@ int phobos_delete(struct pho_xfer_desc *xfers, size_t num_xfers)
     }
 
     return phobos_xfer(xfers, num_xfers, NULL, NULL);
+}
+
+static void incomplete_copy_error(int rc,
+                                  const struct copy_info *incomplete_copy,
+                                  const char *err_msg)
+{
+    pho_error(rc,
+              "Incomplete copy '%s' of "
+              "object_uuid '%s' and version '%d' is not cleaned because %s",
+              incomplete_copy->copy_name, incomplete_copy->object_uuid,
+              incomplete_copy->version, err_msg);
+}
+
+static int get_oid_from_incomplete_copy(struct dss_handle *dss,
+                                        const struct copy_info *incomplete_copy,
+                                        char **xt_objid)
+{
+    struct dss_filter object_uuid_version_filter;
+    struct object_info *object_info;
+    int object_info_count;
+    int rc;
+
+    rc = dss_filter_build(&object_uuid_version_filter,
+                          "{\"$AND\": ["
+                              "{\"DSS::OBJ::uuid\": \"%s\"},"
+                              "{\"DSS::OBJ::version\": \"%d\"}"
+                          "]}",
+                           incomplete_copy->object_uuid,
+                           incomplete_copy->version);
+    if (rc) {
+        incomplete_copy_error(rc, incomplete_copy,
+                              "we failed to build the object filter");
+        return rc;
+    }
+
+    rc = dss_object_get(dss, &object_uuid_version_filter, &object_info,
+                        &object_info_count, NULL);
+    if (rc) {
+        incomplete_copy_error(rc, incomplete_copy,
+                              "we failed to get living object");
+        dss_filter_free(&object_uuid_version_filter);
+        return rc;
+    }
+
+    if (object_info_count == 1) {
+        *xt_objid = xstrdup(object_info->oid);
+        dss_filter_free(&object_uuid_version_filter);
+        goto clean;
+    }
+
+    dss_res_free(object_info, object_info_count);
+    rc = dss_deprecated_object_get(dss, &object_uuid_version_filter,
+                                   &object_info, &object_info_count, NULL);
+    dss_filter_free(&object_uuid_version_filter);
+    if (rc) {
+        incomplete_copy_error(rc, incomplete_copy,
+                              "we failed to get deprecated object");
+        return rc;
+    }
+
+    if (object_info_count == 1)
+        *xt_objid = xstrdup(object_info->oid);
+
+clean:
+    dss_res_free(object_info, object_info_count);
+    return 0;
+}
+
+static int delete_one_incomplete_copy(struct dss_handle *dss,
+                                      const char *hostname,
+                                      struct copy_info *incomplete_copy)
+{
+    struct dss_filter copy_uuid_version_filter;
+    struct copy_info *same_object_copy_list;
+    struct pho_xfer_target target = {0};
+    struct pho_xfer_desc xfer = {0};
+    struct dss_filter layout_filter;
+    struct layout_info *layout;
+    int same_object_copy_count;
+    char *target_uuid;
+    int layout_count;
+    char *copy_name;
+    int nb_new_lock;
+    int rc;
+
+    /* Checked if this copy is the last one of the object */
+    rc = dss_filter_build(&copy_uuid_version_filter,
+                          "{\"$AND\": ["
+                              "{\"DSS::COPY::object_uuid\": \"%s\"},"
+                              "{\"DSS::COPY::version\": \"%d\"}"
+                          "]}",
+                           incomplete_copy->object_uuid,
+                           incomplete_copy->version);
+    if (rc) {
+        incomplete_copy_error(rc, incomplete_copy,
+                              "we failed to build the same object copy filter");
+        return rc;
+    }
+
+    rc = dss_copy_get(dss, &copy_uuid_version_filter, &same_object_copy_list,
+                      &same_object_copy_count, NULL);
+    dss_filter_free(&copy_uuid_version_filter);
+    if (rc) {
+        incomplete_copy_error(rc, incomplete_copy,
+                              "we failed to get all copies of the same object");
+        return rc;
+    }
+
+    dss_res_free(same_object_copy_list, same_object_copy_count);
+    assert(same_object_copy_count >= 1);
+
+    /* Checked if the copy is located on current host */
+    rc = dss_filter_build(&layout_filter,
+                          "{\"$AND\": ["
+                              "{\"DSS::LYT::object_uuid\": \"%s\"},"
+                              "{\"DSS::LYT::version\": \"%d\"},"
+                              "{\"DSS::LYT::copy_name\": \"%s\"}"
+                          "]}",
+                          incomplete_copy->object_uuid,
+                          incomplete_copy->version, incomplete_copy->copy_name);
+    if (rc) {
+        incomplete_copy_error(rc, incomplete_copy,
+                              "we failed to build the layout filter");
+        return rc;
+    }
+
+    rc = dss_full_layout_get(dss, &layout_filter, NULL, &layout, &layout_count,
+                             NULL);
+    dss_filter_free(&layout_filter);
+    if (rc) {
+        incomplete_copy_error(rc, incomplete_copy,
+                              "we failed to get the full layout");
+        return rc;
+    }
+
+    assert(layout_count == 1 || layout_count == 0);
+
+    if (layout_count == 1) {
+        char *locate_hostname;
+
+        target.xt_objid = xstrdup(layout->oid);
+        rc = layout_locate(dss, layout, hostname, &locate_hostname,
+                           &nb_new_lock);
+        if (rc) {
+            incomplete_copy_error(rc, incomplete_copy,
+                                  "we failed to locate the full layout");
+            goto clean_layout;
+        }
+
+        if (strcmp(hostname, locate_hostname)) {
+            pho_warn("Incomplete copy '%s' of "
+                     "object_uuid '%s' and version '%d' is skipped because "
+                     "we locate it on the host '%s'",
+                     incomplete_copy->copy_name, incomplete_copy->object_uuid,
+                     incomplete_copy->version, locate_hostname);
+            free(locate_hostname);
+            goto clean_layout;
+        }
+
+        free(locate_hostname);
+    } else { /* layout_count == 0 */
+        /* incomplete copy without any extent, got OID directly from object */
+        rc = get_oid_from_incomplete_copy(dss, incomplete_copy,
+                                          &target.xt_objid);
+        if (rc)
+            goto clean_layout;
+
+        if (!target.xt_objid) {
+            /* no layout, no object, we only delete the copy */
+            rc = dss_copy_delete(dss, incomplete_copy, 1);
+            if (rc) {
+                incomplete_copy_error(rc, incomplete_copy,
+                                      "we failed to delete this copy with no "
+                                      "layout and no object");
+            } else {
+                pho_info("Successfully cleaned the incomplete copy '%s', "
+                         "object '%s', version '%d', with no layout and no "
+                         "object",
+                         incomplete_copy->copy_name,
+                         incomplete_copy->object_uuid,
+                         incomplete_copy->version);
+            }
+
+            goto clean_layout;
+        }
+
+    }
+
+    /* hard delete the copy/object */
+    xfer.xd_op = PHO_XFER_OP_DEL;
+    copy_name = strdup(incomplete_copy->copy_name);
+    xfer.xd_params.delete.copy_name = copy_name;
+    xfer.xd_params.delete.scope = DSS_OBJ_ALL;
+    xfer.xd_ntargets = 1;
+    xfer.xd_targets = &target;
+    if (same_object_copy_count > 1)
+        xfer.xd_flags = PHO_XFER_COPY_HARD_DEL;
+    else
+        xfer.xd_flags = PHO_XFER_OBJ_HARD_DEL;
+
+    target_uuid = xstrdup(incomplete_copy->object_uuid);
+    target.xt_objuuid = target_uuid;
+    target.xt_version = incomplete_copy->version;
+
+    rc = phobos_delete(&xfer, 1);
+    if (rc)
+        incomplete_copy_error(rc, incomplete_copy, "the phobos delete failed");
+    else
+        pho_info("Successfully cleaned the incomplete copy '%s', object '%s', "
+                 "version '%d'", incomplete_copy->copy_name,
+                 incomplete_copy->object_uuid, incomplete_copy->version);
+
+    pho_xfer_desc_clean(&xfer);
+    free(target_uuid);
+    free(copy_name);
+clean_layout:
+    dss_res_free(layout, layout_count);
+    free(target.xt_objid);
+    return rc;
+}
+
+static int set_todelete_creation_time_string(
+    char *todelete_creation_time_string)
+{
+    struct timeval todelete_creation_time;
+    int delete_incomplete_delay_second;
+    int rc;
+
+    delete_incomplete_delay_second =
+        PHO_CFG_GET_INT(cfg_store, PHO_CFG_STORE,
+                        delete_incomplete_delay_second, INT_MIN);
+    if (delete_incomplete_delay_second == INT_MIN)
+        LOG_RETURN(-EINVAL,
+                   "Unable to set the \"delete_incomplete_delay_second\" "
+                   "config value");
+
+    rc = gettimeofday(&todelete_creation_time, NULL);
+    if (rc) {
+        rc = -errno;
+        LOG_RETURN(rc, "Error when getting current time");
+    }
+
+    if (delete_incomplete_delay_second < 0)
+        LOG_RETURN(-EINVAL,
+                   "delete_incomplete_delay_second config value can not be "
+                   "negative, %d", delete_incomplete_delay_second);
+
+    if (delete_incomplete_delay_second > todelete_creation_time.tv_sec)
+        LOG_RETURN(-EINVAL,
+                   "delete_incomplete_delay_second %d can not be greater than "
+                   "current time %ld", delete_incomplete_delay_second,
+                   todelete_creation_time.tv_sec);
+
+    todelete_creation_time.tv_sec -= delete_incomplete_delay_second;
+    timeval2str(&todelete_creation_time, todelete_creation_time_string);
+    return 0;
+}
+
+int phobos_delete_incomplete_copy(void)
+{
+    char todelete_creation_time_string[PHO_TIMEVAL_MAX_LEN] = "";
+    struct copy_info *incomplete_copy_list;
+    const char *hostname = get_hostname();
+    struct dss_filter incomplete_filter;
+    int incomplete_copy_count;
+    struct dss_handle dss;
+    int rc = 0;
+    int i;
+
+    /* Ensure conf is loaded */
+    rc = pho_cfg_init_local(NULL);
+    if (rc && rc != -EALREADY)
+        return rc;
+
+    /* Compute delay */
+    rc = set_todelete_creation_time_string(todelete_creation_time_string);
+    if (rc)
+        return rc;
+
+    /* Connect to the dss */
+    rc = dss_init(&dss);
+    if (rc)
+        return rc;
+
+    /* List and delete all incomplete copies */
+    rc = dss_filter_build(&incomplete_filter,
+                          "{\"$AND\": ["
+                              "{\"DSS::COPY::copy_status\": \"%s\"},"
+                              "{\"$LTE\": "
+                                  "{\"DSS::COPY::creation_time\": \"%s\"}}"
+                          "]}",
+                          copy_status2str(PHO_COPY_STATUS_INCOMPLETE),
+                          todelete_creation_time_string);
+    if (rc)
+        goto clean_dss;
+
+    rc = dss_copy_get(&dss, &incomplete_filter, &incomplete_copy_list,
+                      &incomplete_copy_count, NULL);
+    dss_filter_free(&incomplete_filter);
+    if (rc)
+        LOG_GOTO(clean_dss, rc, "Cannot fetch incomplete copies from DSS");
+
+    for (i = 0; i < incomplete_copy_count; i++)
+        rc = rc ? : delete_one_incomplete_copy(&dss, hostname,
+                                               &incomplete_copy_list[i]);
+
+    dss_res_free(incomplete_copy_list, incomplete_copy_count);
+clean_dss:
+    dss_fini(&dss);
+    return rc;
 }
 
 int phobos_undelete(struct pho_xfer_desc *xfers, size_t num_xfers)
