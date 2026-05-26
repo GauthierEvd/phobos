@@ -63,6 +63,9 @@ struct pho_layout_module_ops {
     /** Initialize a new eraser to delete an object from phobos */
     int (*erase)(struct pho_data_processor *eraser);
 
+    /** Initialize a new rebuilder to rebuild a copy from phobos */
+    int (*rebuild)(struct pho_data_processor *rebuilder);
+
     /** Retrieve one node name from which an object can be accessed */
     int (*locate)(struct dss_handle *dss, struct layout_info *layout,
                   const char *focus_host, char **hostname, int *nb_new_lock);
@@ -115,6 +118,7 @@ enum processor_type {
     PHO_PROC_DECODER,
     PHO_PROC_ERASER,
     PHO_PROC_COPIER,
+    PHO_PROC_REBUILDER,
 };
 
 
@@ -239,6 +243,14 @@ static inline bool is_copier(struct pho_data_processor *processor)
     return processor->type == PHO_PROC_COPIER;
 }
 
+/**
+ * Check if the data processor is of type rebuilder.
+ */
+static inline bool is_rebuilder(struct pho_data_processor *processor)
+{
+    return processor->type == PHO_PROC_REBUILDER;
+}
+
 static inline const char *processor_type2str(struct pho_data_processor *proc)
 {
     switch (proc->type) {
@@ -250,6 +262,8 @@ static inline const char *processor_type2str(struct pho_data_processor *proc)
         return "eraser";
     case PHO_PROC_COPIER:
         return "copier";
+    case PHO_PROC_REBUILDER:
+        return "rebuilder";
     default:
         return "unknow";
     }

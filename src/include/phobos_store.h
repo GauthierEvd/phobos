@@ -80,24 +80,26 @@ typedef void (*pho_completion_cb_t)(void *udata,
  * Phobos Xfer operations.
  */
 enum pho_xfer_op {
-    PHO_XFER_OP_PUT,   /**< PUT operation. */
-    PHO_XFER_OP_GET,   /**< GET operation. */
-    PHO_XFER_OP_GETMD, /**< GET metadata operation. */
-    PHO_XFER_OP_SETMD, /**< SET metedata operation. */
-    PHO_XFER_OP_DEL,   /**< DEL operation. */
-    PHO_XFER_OP_UNDEL, /**< UNDEL operation. */
-    PHO_XFER_OP_COPY,  /**< COPY operation. */
+    PHO_XFER_OP_PUT,     /**< PUT operation. */
+    PHO_XFER_OP_GET,     /**< GET operation. */
+    PHO_XFER_OP_GETMD,   /**< GET metadata operation. */
+    PHO_XFER_OP_SETMD,   /**< SET metedata operation. */
+    PHO_XFER_OP_DEL,     /**< DEL operation. */
+    PHO_XFER_OP_UNDEL,   /**< UNDEL operation. */
+    PHO_XFER_OP_COPY,    /**< COPY operation. */
+    PHO_XFER_OP_REBUILD, /**< REBUILD operation. */
     PHO_XFER_OP_LAST
 };
 
 static const char * const xfer_op_names[] = {
-    [PHO_XFER_OP_PUT]   = "PUT",
-    [PHO_XFER_OP_GET]   = "GET",
-    [PHO_XFER_OP_GETMD] = "GETMD",
-    [PHO_XFER_OP_SETMD] = "SETMD",
-    [PHO_XFER_OP_DEL]   = "DELETE",
-    [PHO_XFER_OP_UNDEL] = "UNDELETE",
-    [PHO_XFER_OP_COPY]  = "COPY",
+    [PHO_XFER_OP_PUT]     = "PUT",
+    [PHO_XFER_OP_GET]     = "GET",
+    [PHO_XFER_OP_GETMD]   = "GETMD",
+    [PHO_XFER_OP_SETMD]   = "SETMD",
+    [PHO_XFER_OP_DEL]     = "DELETE",
+    [PHO_XFER_OP_UNDEL]   = "UNDELETE",
+    [PHO_XFER_OP_COPY]    = "COPY",
+    [PHO_XFER_OP_REBUILD] = "REBUILD",
 };
 
 static inline const char *xfer_op2str(enum pho_xfer_op op)
