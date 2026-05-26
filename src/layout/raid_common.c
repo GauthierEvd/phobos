@@ -1353,26 +1353,23 @@ static int raid_writer_split_setup(struct pho_data_processor *proc,
     return io_context->ops->set_extra_attrs(proc);
 }
 
-static void raid_writer_split_close(struct pho_data_processor *proc, int *rc)
+static void common_writer_rebuilder_split_close(struct pho_data_processor *proc,
+                                                struct object_metadata *md,
+                                                int *rc)
 {
     pho_req_release_t *release_req = proc->writer_release_alloc->release;
+    struct raid_io_context *io_context;
     int target = proc->current_target;
-    struct raid_io_context *io_context =
-        &((struct raid_io_context *) proc->private_writer)[target];
-    struct object_metadata object_md = {
-        .object_attrs = proc->xfer->xd_targets[target].xt_attrs,
-        .object_size = proc->xfer->xd_targets[target].xt_size,
-        .object_version = proc->xfer->xd_targets[target].xt_version,
-        .layout_name = io_context->name,
-        .object_uuid = proc->xfer->xd_targets[target].xt_objuuid,
-        .copy_name = proc->dest_layout[target].copy_name,
-    };
-    size_t n_extents = n_total_extents(io_context);
     struct output_io_context *output;
+    size_t n_extents;
     int i = 0;
     int rc2;
 
+    ENTRY;
+
+    io_context = &((struct raid_io_context *) proc->private_writer)[target];
     output = raid_output_io_context(io_context, proc->type);
+    n_extents = get_n_extents(io_context, proc->type);
 
     /* set extent md */
     if (!*rc) {
@@ -1399,7 +1396,7 @@ static void raid_writer_split_close(struct pho_data_processor *proc, int *rc)
                 proc->write_resp->walloc->media[i]->addr_type;
             ext_location.extent = &output->extents[i];
             iod->iod_loc = &ext_location;
-            rc2 = set_object_md(iod->iod_ioa, iod, &object_md);
+            rc2 = set_object_md(iod->iod_ioa, iod, md);
             pho_attrs_free(&iod->iod_attrs);
             if (rc2) {
                 *rc = rc2;
@@ -1434,6 +1431,25 @@ static void raid_writer_split_close(struct pho_data_processor *proc, int *rc)
 
     for (; i < n_extents; i++)
         ioa_close(io_context->iods[i].iod_ioa, &io_context->iods[i]);
+}
+
+static void raid_writer_split_close(struct pho_data_processor *proc, int *rc)
+{
+    int target = proc->current_target;
+    struct raid_io_context *io_context =
+        &((struct raid_io_context *) proc->private_writer)[target];
+    struct object_metadata object_md = {
+        .object_attrs = proc->xfer->xd_targets[target].xt_attrs,
+        .object_size = proc->xfer->xd_targets[target].xt_size,
+        .object_version = proc->xfer->xd_targets[target].xt_version,
+        .layout_name = io_context->name,
+        .object_uuid = proc->xfer->xd_targets[target].xt_objuuid,
+        .copy_name = proc->dest_layout[target].copy_name,
+    };
+
+    ENTRY;
+
+    common_writer_rebuilder_split_close(proc, &object_md, rc);
 
     /* next split */
     if (!*rc) {
@@ -1950,6 +1966,26 @@ static int raid_rebuilder_split_setup(struct pho_data_processor *proc)
         io_context->rebuild.current_split_extent_size;
 
     return io_context->ops->set_extra_attrs(proc);
+}
+
+__attribute__((unused))
+static void raid_rebuilder_split_close(struct pho_data_processor *proc, int *rc)
+{
+    struct raid_io_context *io_context = proc->private_writer;
+    struct object_metadata object_md = {
+        .object_attrs = proc->xfer->xd_targets->xt_attrs,
+        .object_size = proc->object_size,
+        .object_version = proc->src_layout->version,
+        .layout_name = io_context->name,
+        .object_uuid = proc->src_layout->uuid,
+        .copy_name = proc->src_layout->copy_name,
+    };
+
+    ENTRY;
+
+    common_writer_rebuilder_split_close(proc, &object_md, rc);
+
+    io_context->rebuild.current_split_missing_count = 0;
 }
 
 int extent_hash_init(struct extent_hash *hash, bool use_md5, bool use_xxhash)
