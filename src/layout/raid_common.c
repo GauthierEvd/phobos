@@ -1458,6 +1458,20 @@ static void raid_writer_split_close(struct pho_data_processor *proc, int *rc)
     }
 }
 
+static void common_fill_layout(struct output_io_context *output,
+                               struct layout_info *layout)
+{
+    layout->ext_count = output->written_extents->len;
+    layout->extents = (struct extent *)
+        g_array_free(output->written_extents, FALSE);
+    output->written_extents = NULL;
+
+    output->n_released_media = 0;
+
+    for (int i = 0; i < layout->ext_count; ++i)
+        layout->extents[i].state = PHO_EXT_ST_SYNC;
+}
+
 static int raid_writer_handle_partial_release_resp(
     struct pho_data_processor *encoder,
     pho_resp_release_t *rel_resp
@@ -1466,7 +1480,7 @@ static int raid_writer_handle_partial_release_resp(
     struct raid_io_context *io_context;
     struct output_io_context *output;
     int rc = 0;
-    int i, j;
+    int i;
 
     for (i = 0; i < encoder->current_target; i++) {
         io_context =
@@ -1476,18 +1490,40 @@ static int raid_writer_handle_partial_release_resp(
             continue;
 
         output = raid_output_io_context(io_context, encoder->type);
-
-        encoder->dest_layout[i].ext_count = output->written_extents->len;
-        encoder->dest_layout[i].extents = (struct extent *)
-            g_array_free(output->written_extents, FALSE);
-
-        output->written_extents = NULL;
-        output->n_released_media = 0;
-
-        for (j = 0; j < encoder->dest_layout->ext_count; ++j)
-            encoder->dest_layout[i].extents[j].state = PHO_EXT_ST_SYNC;
+        common_fill_layout(output, &encoder->dest_layout[i]);
 
         io_context->write.released = true;
+    }
+
+    return rc;
+}
+
+static int common_release_media(struct pho_data_processor *proc,
+                                pho_resp_release_t *rel_resp)
+{
+    struct raid_io_context *io_context;
+    int rc = 0;
+    int i, j;
+
+    for (i = 0; i < rel_resp->n_med_ids; i++) {
+        bool found = false;
+
+        pho_debug("Marking medium '%s':'%s' as released",
+                  rel_resp->med_ids[i]->name,
+                  rel_resp->med_ids[i]->library);
+        for (j = 0; j < proc->xfer->xd_ntargets; j++) {
+            /* If the media_id is unexpected, -EINVAL will be returned */
+            io_context = &((struct raid_io_context *) proc->private_writer)[j];
+            mark_written_medium_released(io_context, proc->type,
+                                         rel_resp->med_ids[i], &found);
+        }
+
+        if (!found)
+            pho_error(rc = -EINVAL,
+                      "Got a release response for medium '%s':'%s' but it is "
+                      "was not in any release list",
+                      rel_resp->med_ids[i]->library,
+                      rel_resp->med_ids[i]->name);
     }
 
     return rc;
@@ -1499,29 +1535,9 @@ static int raid_writer_handle_release_resp(struct pho_data_processor *encoder,
     struct raid_io_context *io_context;
     int target_released = 0;
     int rc = 0;
-    int i, j;
+    int i;
 
-    for (i = 0; i < rel_resp->n_med_ids; i++) {
-        bool found = false;
-
-        pho_debug("Marking medium '%s':'%s' as released",
-                  rel_resp->med_ids[i]->name,
-                  rel_resp->med_ids[i]->library);
-        for (j = 0; j < encoder->xfer->xd_ntargets; j++) {
-            /* If the media_id is unexpected, -EINVAL will be returned */
-            io_context =
-                &((struct raid_io_context *) encoder->private_writer)[j];
-            mark_written_medium_released(io_context, encoder->type,
-                                         rel_resp->med_ids[i], &found);
-        }
-
-        if (!found)
-            pho_error(rc = -EINVAL,
-                      "Got a release response for medium '%s':'%s' but it is "
-                      "was not in any release list",
-                      rel_resp->med_ids[i]->library,
-                      rel_resp->med_ids[i]->name);
-    }
+    rc = common_release_media(encoder, rel_resp);
 
     /*
      * If we wrote everything and all the releases have been received, mark the
@@ -1547,15 +1563,7 @@ static int raid_writer_handle_release_resp(struct pho_data_processor *encoder,
             output->written_extents->len == output->n_released_media) {
 
             /* Fill the layout with the extents */
-            encoder->dest_layout[i].ext_count = output->written_extents->len;
-            encoder->dest_layout[i].extents = (struct extent *)
-                g_array_free(output->written_extents, FALSE);
-            output->written_extents = NULL;
-
-            output->n_released_media = 0;
-
-            for (j = 0; j < encoder->dest_layout->ext_count; ++j)
-                encoder->dest_layout[i].extents[j].state = PHO_EXT_ST_SYNC;
+            common_fill_layout(output, &encoder->dest_layout[i]);
 
             io_context->write.released = true;
             target_released++;
@@ -1588,7 +1596,8 @@ static void complete_and_transfer_release(struct pho_data_processor *proc,
         } else {
             release_req->media[i]->to_sync = true;
             release_req->media[i]->grouping =
-                (char *) xstrdup_safe(proc->xfer->xd_op == PHO_XFER_OP_COPY ?
+                (char *) xstrdup_safe((proc->type == PHO_PROC_COPIER ||
+                                       proc->type == PHO_PROC_REBUILDER) ?
                                        proc->xfer->xd_params.copy.put.grouping :
                                        proc->xfer->xd_params.put.grouping);
         }
@@ -1986,6 +1995,29 @@ static void raid_rebuilder_split_close(struct pho_data_processor *proc, int *rc)
     common_writer_rebuilder_split_close(proc, &object_md, rc);
 
     io_context->rebuild.current_split_missing_count = 0;
+}
+
+__attribute__((unused))
+static int raid_rebuilder_handle_release_resp(struct pho_data_processor *proc,
+                                              pho_resp_release_t *resp)
+{
+    struct raid_io_context *io_context = proc->private_writer;
+    struct output_io_context *output;
+    int rc = 0;
+
+    rc = common_release_media(proc, resp);
+
+    output = raid_output_io_context(io_context, proc->type);
+
+    if (io_context->rebuild.missing_extents_remaining == 0 &&
+        output->written_extents->len > 0 &&
+        output->written_extents->len == output->n_released_media) {
+
+        common_fill_layout(output, proc->dest_layout);
+        proc->done = true;
+    }
+
+    return rc;
 }
 
 int extent_hash_init(struct extent_hash *hash, bool use_md5, bool use_xxhash)
