@@ -323,6 +323,68 @@ int layout_copier(struct pho_data_processor *copier, struct pho_xfer_desc *xfer,
     return rc;
 }
 
+static int build_layout_rebuilder(struct pho_data_processor *rebuilder,
+                                  struct pho_xfer_desc *xfer,
+                                  struct layout_info *layout)
+{
+    struct pho_xfer_put_params *put_params;
+    char layout_name[NAME_MAX];
+    struct layout_module *mod;
+    int rc;
+
+    rc = build_layout_name(layout->layout_desc.mod_name, layout_name,
+                           sizeof(layout_name));
+    if (rc)
+        return rc;
+
+    /* Load new module if necessare */
+    rc = load_module(layout_name, sizeof(*mod), phobos_context(),
+                     (void **) &mod);
+    if (rc)
+        return rc;
+
+    // Use the copy params as the rebuild will use the get and put params
+    put_params = &xfer->xd_params.copy.put;
+
+    rebuilder->dest_layout = xcalloc(1, sizeof(*rebuilder->dest_layout));
+    rebuilder->dest_layout->oid = xstrdup(layout->oid);
+    rebuilder->dest_layout->uuid = xstrdup(layout->uuid);
+    rebuilder->dest_layout->version = layout->version;
+    rebuilder->dest_layout->copy_name = xstrdup(put_params->copy_name);
+
+    return mod->ops->rebuild(rebuilder);
+}
+
+int layout_rebuilder(struct pho_data_processor *rebuilder,
+                     struct pho_xfer_desc *xfer, struct layout_info *layout)
+{
+    int rc;
+
+    rebuilder->type = PHO_PROC_REBUILDER;
+    rebuilder->done = false;
+    rebuilder->xfer = xfer;
+
+    rc = build_layout_reader(rebuilder, xfer, layout);
+    if (rc) {
+        layout_destroy(rebuilder);
+        LOG_RETURN(rc, "Unable to create reader part of a rebuilder");
+    }
+
+    rc = build_layout_rebuilder(rebuilder, xfer, layout);
+    if (rc) {
+        layout_destroy(rebuilder);
+        LOG_RETURN(rc, "Unable to create rebuilder part of a rebuilder");
+    }
+
+    /* get io_block_size from conf */
+    rc = get_cfg_io_block_size(&rebuilder->io_block_size,
+                               xfer->xd_params.copy.put.family);
+    if (rc)
+        layout_destroy(rebuilder);
+
+    return rc;
+}
+
 int layout_locate(struct dss_handle *dss, struct layout_info *layout,
                   const char *focus_host, char **hostname, int *nb_new_lock)
 {

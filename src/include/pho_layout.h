@@ -352,6 +352,23 @@ int layout_copier(struct pho_data_processor *copier, struct pho_xfer_desc *xfer,
                   struct layout_info *layout);
 
 /**
+ * Initialize a new data processor to rebuild a copy described by \a xfer from
+ * phobos.
+ *
+ * @param[out]  rebuilder  Rebuilder to be initialized
+ * @param[in]   xfer       Transfer to make this rebuilder work on. A reference
+ *                         on it will be kept as long as \a enc is in use and
+ *                         some of its fields may be modified (notably xd_rc).
+ * @param[in]   layout     Layout of the copy to rebuild. It is used in-place by
+ *                         the rebuilder and must be freed separately by the
+ *                         caller after the rebuilder is destroyed.
+ *
+ * @return 0 on success, -errno on error.
+ */
+int layout_rebuilder(struct pho_data_processor *rebuilder,
+                     struct pho_xfer_desc *xfer, struct layout_info *layout);
+
+/**
  * Retrieve one node name from which an object can be accessed.
  *
  * @param[in]   dss         DSS handle
