@@ -49,7 +49,7 @@ static int set_extent_extra_attrs(struct extent *extent,
 
 static int set_raid4_md(struct raid_io_context *io_context, size_t chunk_size)
 {
-    struct extent *extents = io_context->write.extents;
+    struct extent *extents = io_context->write.output.extents;
     size_t n_extents = io_context->n_data_extents +
         io_context->n_parity_extents;
     struct pho_io_descr *iods = io_context->iods;
@@ -96,7 +96,7 @@ int raid4_write_from_buff(struct pho_data_processor *proc)
 
         /* limit: extent -> chunk */
         to_write_extent_0 = min(to_write,
-                                io_context->write.extents[0].size -
+                                io_context->write.output.extents[0].size -
                                     iods[0].iod_size);
         to_write_extent_0 = min(to_write_extent_0,
                                 io_context->current_split_chunk_size);
@@ -120,7 +120,7 @@ int raid4_write_from_buff(struct pho_data_processor *proc)
 
         /* limit: extent -> chunk */
         to_write_extent_1 = min(to_write,
-                                io_context->write.extents[1].size -
+                                io_context->write.output.extents[1].size -
                                     iods[1].iod_size);
         to_write_extent_1 = min(to_write_extent_1,
                                 io_context->current_split_chunk_size);

@@ -195,8 +195,9 @@ static int raid1_write_from_buff(struct pho_data_processor *proc)
     ENTRY;
 
     /* limit write : split -> buffer */
-    to_write = min(io_context->write.extents[0].size - inside_split_offset,
-                   proc->reader_offset - proc->writer_offset);
+    to_write = min(
+                io_context->write.output.extents[0].size - inside_split_offset,
+                proc->reader_offset - proc->writer_offset);
 
     for (i = 0; i < repl_count; ++i) {
         rc = data_processor_write_from_buff(proc, &iods[i], to_write, 0);
@@ -238,10 +239,13 @@ static int raid1_extra_attrs(struct pho_data_processor *proc)
     size_t repl_count = io_context->n_data_extents +
         io_context->n_parity_extents;
     struct pho_io_descr *iods = io_context->iods;
+    struct output_io_context *output;
     size_t i;
 
+    output = raid_output_io_context(io_context, proc->type);
+
     for (i = 0; i < repl_count; ++i) {
-        struct extent *extent = &io_context->write.extents[i];
+        struct extent *extent = &output->extents[i];
         int rc;
 
         rc = set_layout_specific_md(extent->layout_idx, repl_count, &iods[i]);

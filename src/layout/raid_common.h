@@ -75,10 +75,7 @@ struct delete_io_context {
     size_t to_delete;               /*< Number of extents to delete */
 };
 
-struct write_io_context {
-    bool all_is_written;
-    bool released;              /*< true when we receive all release ack */
-    size_t to_write;            /*< Whole object remaining size to write */
+struct output_io_context {
     GString *user_md;
     struct extent *extents;
 
@@ -106,6 +103,20 @@ struct write_io_context {
      * nb_released_media == written_extents->len
      */
     size_t n_released_media;
+};
+
+struct write_io_context {
+    struct output_io_context output;
+    bool all_is_written;
+    bool released;              /*< true when we receive all release ack */
+    size_t to_write;            /*< Whole object remaining size to write */
+};
+
+struct rebuild_io_context {
+    struct output_io_context output;
+    size_t missing_extents_remaining;
+    size_t current_split_missing_count;
+    size_t current_split_extent_size;
 };
 
 struct raid_io_context {
@@ -139,6 +150,7 @@ struct raid_io_context {
         struct read_io_context read;
         struct delete_io_context delete;
         struct write_io_context write;
+        struct rebuild_io_context rebuild;
     };
 
     /**
@@ -153,6 +165,14 @@ struct raid_io_context {
     /** Size of \p hashes, initialized by the layout */
     size_t nb_hashes;
 };
+
+static inline struct output_io_context *raid_output_io_context(
+                    struct raid_io_context *io_context,
+                    enum processor_type type)
+{
+    return type == PHO_PROC_REBUILDER ?
+            &io_context->rebuild.output : &io_context->write.output;
+}
 
 struct raid_ops {
     int (*get_reader_chunk_size)(struct pho_data_processor *proc,

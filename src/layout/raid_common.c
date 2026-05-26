@@ -70,6 +70,7 @@ int raid_encoder_init(struct pho_data_processor *encoder,
 {
     struct raid_io_context *io_context = encoder->private_writer;
     size_t n_extents = n_total_extents(io_context);
+    struct output_io_context *output;
     int rc;
     int i;
 
@@ -81,6 +82,7 @@ int raid_encoder_init(struct pho_data_processor *encoder,
     for (i = 0; i < encoder->xfer->xd_ntargets; i++) {
         io_context =
             &((struct raid_io_context *) encoder->private_writer)[i];
+        output = raid_output_io_context(io_context, encoder->type);
         n_extents = n_total_extents(io_context);
 
         if (encoder->xfer->xd_targets[i].xt_fd < 0)
@@ -100,26 +102,25 @@ int raid_encoder_init(struct pho_data_processor *encoder,
          * attributes. This information will be attached to backend objects for
          * "self-description"/"rebuild" purpose.
          */
-        io_context->write.user_md = g_string_new(NULL);
+        output->user_md = g_string_new(NULL);
         rc = pho_attrs_to_json(&encoder->xfer->xd_targets[i].xt_attrs,
-                               io_context->write.user_md,
+                               output->user_md,
                                PHO_ATTR_BACKUP_JSON_FLAGS);
         if (rc) {
-            g_string_free(io_context->write.user_md, TRUE);
+            g_string_free(output->user_md, TRUE);
             LOG_RETURN(rc, "Failed to convert attributes to JSON");
         }
 
-        io_context->write.written_extents = g_array_new(FALSE, TRUE,
+        output->written_extents = g_array_new(FALSE, TRUE,
                                                         sizeof(struct extent));
-        g_array_set_clear_func(io_context->write.written_extents,
+        g_array_set_clear_func(output->written_extents,
                                free_extent_address_buff);
 
-        io_context->write.to_release_media =
+        output->to_release_media =
             g_hash_table_new_full(g_pho_id_hash, g_pho_id_equal, free, free);
 
         io_context->iods = xcalloc(n_extents, sizeof(*io_context->iods));
-        io_context->write.extents = xcalloc(n_extents,
-                                            sizeof(*io_context->write.extents));
+        output->extents = xcalloc(n_extents, sizeof(*output->extents));
     }
 
     return 0;
@@ -238,6 +239,7 @@ void raid_eraser_processor_destroy(struct pho_data_processor *proc)
 void raid_writer_processor_destroy(struct pho_data_processor *proc)
 {
     struct raid_io_context *io_context;
+    struct output_io_context *output;
     int i, j;
 
     for (i = 0; i < proc->xfer->xd_ntargets; i++) {
@@ -246,21 +248,23 @@ void raid_writer_processor_destroy(struct pho_data_processor *proc)
         if (!io_context)
             return;
 
-        if (io_context->write.written_extents)
-            g_array_free(io_context->write.written_extents, TRUE);
+        output = raid_output_io_context(io_context, proc->type);
 
-        if (io_context->write.to_release_media)
-            g_hash_table_destroy(io_context->write.to_release_media);
+        if (output->written_extents)
+            g_array_free(output->written_extents, TRUE);
 
-        io_context->write.written_extents = NULL;
-        io_context->write.to_release_media = NULL;
+        if (output->to_release_media)
+            g_hash_table_destroy(output->to_release_media);
+
+        output->written_extents = NULL;
+        output->to_release_media = NULL;
         for (j = 0; j < n_total_extents(io_context); ++j) {
-            free(io_context->write.extents[j].uuid);
-            free(io_context->write.extents[j].address.buff);
+            free(output->extents[j].uuid);
+            free(output->extents[j].address.buff);
         }
-        free(io_context->write.extents);
+        free(output->extents);
         free(io_context->iods);
-        g_string_free(io_context->write.user_md, TRUE);
+        g_string_free(output->user_md, TRUE);
 
         for (j = 0; j < io_context->nb_hashes; j++)
             extent_hash_fini(&io_context->hashes[j]);
@@ -298,11 +302,13 @@ struct pho_ext_loc make_ext_location(struct pho_data_processor *proc,
     struct pho_ext_loc loc;
 
     if (type == PHO_PROC_ENCODER) {
+        struct output_io_context *output = raid_output_io_context(io_context,
+                                                                  proc->type);
         loc.root_path =
             proc->write_resp->walloc->media[alloc_medium_index]->root_path;
         loc.addr_type =
             proc->write_resp->walloc->media[alloc_medium_index]->addr_type;
-        loc.extent = &io_context->write.extents[context_or_layout_ext_index];
+        loc.extent = &output->extents[context_or_layout_ext_index];
     } else if (type == PHO_PROC_DECODER) {
         loc.root_path =
             io_context->read.resp->ralloc->media[alloc_medium_index]->root_path;
@@ -545,7 +551,7 @@ static void raid_io_context_set_extent_info(struct raid_io_context *io_context,
                                             pho_resp_write_elt_t **medium,
                                             int extent_idx, size_t offset)
 {
-    struct extent *extents = io_context->write.extents;
+    struct extent *extents = io_context->write.output.extents;
     int i;
 
     for (i = 0; i < n_total_extents(io_context); i++) {
@@ -563,7 +569,7 @@ static void raid_io_context_set_extent_size(struct raid_io_context *io_context,
                                             size_t extent_size,
                                             size_t extent_size_remainder)
 {
-    struct extent *extents = io_context->write.extents;
+    struct extent *extents = io_context->write.output.extents;
     int i;
 
     for (i = 0; i < n_total_extents(io_context); i++) {
@@ -589,35 +595,42 @@ static void raid_io_context_setmd(struct raid_io_context *io_context,
 }
 
 static void add_new_to_release_media(struct raid_io_context *io_context,
+                                     enum processor_type type,
                                      const struct pho_id *media_id)
 {
+    struct output_io_context *output;
     gboolean was_not_in;
     size_t *ref_count;
 
     ref_count = xmalloc(sizeof(*ref_count));
     *ref_count = 1;
 
-    was_not_in = g_hash_table_insert(io_context->write.to_release_media,
+    output = raid_output_io_context(io_context, type);
+    was_not_in = g_hash_table_insert(output->to_release_media,
                                      pho_id_dup(media_id), ref_count);
     assert(was_not_in);
 }
 
 static void raid_io_add_written_extent(struct raid_io_context *io_context,
+                                       enum processor_type type,
                                        struct extent *extent)
 {
+    struct output_io_context *output;
     size_t *to_release_refcount;
 
+    output = raid_output_io_context(io_context, type);
+
     /* add extent to written ones */
-    g_array_append_val(io_context->write.written_extents, *extent);
+    g_array_append_val(output->written_extents, *extent);
 
     /* add medium to be released */
-    to_release_refcount =
-        g_hash_table_lookup(io_context->write.to_release_media, &extent->media);
+    to_release_refcount = g_hash_table_lookup(output->to_release_media,
+                                              &extent->media);
 
     if (to_release_refcount) /* existing media_id to release */
         ++(*to_release_refcount);
     else                     /* new media_id to release */
-        add_new_to_release_media(io_context, &extent->media);
+        add_new_to_release_media(io_context, type, &extent->media);
 
     /* Since we make a copy of the extent, reset this one to avoid reusing
      * internal pointers somewhere else in the code.
@@ -720,14 +733,17 @@ static void pho_id_from_rsc_id(const pho_rsc_id_t *medium, struct pho_id *dst)
 }
 
 static int mark_written_medium_released(struct raid_io_context *io_context,
+                                        enum processor_type type,
                                         const pho_rsc_id_t *medium, bool *found)
 {
+    struct output_io_context *output;
     size_t *to_release_refcount;
     struct pho_id copy;
 
+    output = raid_output_io_context(io_context, type);
+
     pho_id_from_rsc_id(medium, &copy);
-    to_release_refcount =
-        g_hash_table_lookup(io_context->write.to_release_media, &copy);
+    to_release_refcount = g_hash_table_lookup(output->to_release_media, &copy);
 
     if (to_release_refcount == NULL)
         return 0;
@@ -738,14 +754,13 @@ static int mark_written_medium_released(struct raid_io_context *io_context,
     assert(*to_release_refcount > 0);
 
     /* one medium was released */
-    io_context->write.n_released_media++;
+    output->n_released_media++;
 
     /* only one release was ongoing for this medium: remove from the table */
     if (*to_release_refcount == 1) {
         gboolean was_in_table;
 
-        was_in_table = g_hash_table_remove(io_context->write.to_release_media,
-                                           &copy);
+        was_in_table = g_hash_table_remove(output->to_release_media, &copy);
         assert(was_in_table);
         return 0;
     }
@@ -1169,7 +1184,7 @@ static int raid_writer_split_setup(struct pho_data_processor *proc,
         iods[i].iod_flags = PHO_IO_REPLACE | PHO_IO_NO_REUSE;
     }
 
-    raid_io_context_setmd(io_context, io_context->write.user_md);
+    raid_io_context_setmd(io_context, io_context->write.output.user_md);
 
     extent_size = (proc->object_size - proc->writer_offset) /
                   io_context->n_data_extents;
@@ -1228,7 +1243,8 @@ static int raid_writer_split_setup(struct pho_data_processor *proc,
 
     io_context->current_split_size = 0;
     for (i = 0; i < io_context->n_data_extents; i++)
-        io_context->current_split_size += io_context->write.extents[i].size;
+        io_context->current_split_size +=
+            io_context->write.output.extents[i].size;
 
     return io_context->ops->set_extra_attrs(proc);
 }
@@ -1248,8 +1264,11 @@ static void raid_writer_split_close(struct pho_data_processor *proc, int *rc)
         .copy_name = proc->dest_layout[target].copy_name,
     };
     size_t n_extents = n_total_extents(io_context);
+    struct output_io_context *output;
     int i = 0;
     int rc2;
+
+    output = raid_output_io_context(io_context, proc->type);
 
     /* set extent md */
     if (!*rc) {
@@ -1267,15 +1286,14 @@ static void raid_writer_split_close(struct pho_data_processor *proc, int *rc)
                 break;
             }
 
-            extent_hash_copy(&io_context->hashes[i],
-                             &io_context->write.extents[i]);
+            extent_hash_copy(&io_context->hashes[i], &output->extents[i]);
 
             /* set extent location */
             ext_location.root_path =
                 proc->write_resp->walloc->media[i]->root_path;
             ext_location.addr_type =
                 proc->write_resp->walloc->media[i]->addr_type;
-            ext_location.extent = &io_context->write.extents[i];
+            ext_location.extent = &output->extents[i];
             iod->iod_loc = &ext_location;
             rc2 = set_object_md(iod->iod_ioa, iod, &object_md);
             pho_attrs_free(&iod->iod_attrs);
@@ -1291,8 +1309,7 @@ static void raid_writer_split_close(struct pho_data_processor *proc, int *rc)
                 break;
             }
 
-            rc2 = gettimeofday(&io_context->write.extents[i].creation_time,
-                               NULL);
+            rc2 = gettimeofday(&output->extents[i].creation_time, NULL);
             if (rc2) {
                 i++;
                 *rc = rc2;
@@ -1302,8 +1319,8 @@ static void raid_writer_split_close(struct pho_data_processor *proc, int *rc)
                 break;
             }
 
-            raid_io_add_written_extent(io_context,
-                                       &io_context->write.extents[i]);
+            raid_io_add_written_extent(io_context, proc->type,
+                                       &output->extents[i]);
 
             /* update release */
             release_req->media[i]->nb_extents_written += 1;
@@ -1327,6 +1344,7 @@ static int raid_writer_handle_partial_release_resp(
 )
 {
     struct raid_io_context *io_context;
+    struct output_io_context *output;
     int rc = 0;
     int i, j;
 
@@ -1337,13 +1355,14 @@ static int raid_writer_handle_partial_release_resp(
         if (io_context->write.released)
             continue;
 
-        encoder->dest_layout[i].ext_count =
-            io_context->write.written_extents->len;
-        encoder->dest_layout[i].extents = (struct extent *)
-            g_array_free(io_context->write.written_extents, FALSE);
+        output = raid_output_io_context(io_context, encoder->type);
 
-        io_context->write.written_extents = NULL;
-        io_context->write.n_released_media = 0;
+        encoder->dest_layout[i].ext_count = output->written_extents->len;
+        encoder->dest_layout[i].extents = (struct extent *)
+            g_array_free(output->written_extents, FALSE);
+
+        output->written_extents = NULL;
+        output->n_released_media = 0;
 
         for (j = 0; j < encoder->dest_layout->ext_count; ++j)
             encoder->dest_layout[i].extents[j].state = PHO_EXT_ST_SYNC;
@@ -1372,8 +1391,8 @@ static int raid_writer_handle_release_resp(struct pho_data_processor *encoder,
             /* If the media_id is unexpected, -EINVAL will be returned */
             io_context =
                 &((struct raid_io_context *) encoder->private_writer)[j];
-            mark_written_medium_released(io_context, rel_resp->med_ids[i],
-                                         &found);
+            mark_written_medium_released(io_context, encoder->type,
+                                         rel_resp->med_ids[i], &found);
         }
 
         if (!found)
@@ -1389,6 +1408,8 @@ static int raid_writer_handle_release_resp(struct pho_data_processor *encoder,
      * encoder as done.
      */
     for (i = 0; i < encoder->xfer->xd_ntargets; i++) {
+        struct output_io_context *output;
+
         io_context =
             &((struct raid_io_context *) encoder->private_writer)[i];
 
@@ -1397,21 +1418,21 @@ static int raid_writer_handle_release_resp(struct pho_data_processor *encoder,
             continue;
         }
 
+        output = raid_output_io_context(io_context, encoder->type);
+
         if (io_context->write.all_is_written && /* no more data to write */
             /* at least one extent is created, special test for null size put */
-            io_context->write.written_extents->len > 0 &&
+            output->written_extents->len > 0 &&
             /* we got releases of all extents */
-            io_context->write.written_extents->len ==
-            io_context->write.n_released_media) {
+            output->written_extents->len == output->n_released_media) {
 
             /* Fill the layout with the extents */
-            encoder->dest_layout[i].ext_count =
-                io_context->write.written_extents->len;
+            encoder->dest_layout[i].ext_count = output->written_extents->len;
             encoder->dest_layout[i].extents = (struct extent *)
-            g_array_free(io_context->write.written_extents, FALSE);
-            io_context->write.written_extents = NULL;
+                g_array_free(output->written_extents, FALSE);
+            output->written_extents = NULL;
 
-            io_context->write.n_released_media = 0;
+            output->n_released_media = 0;
 
             for (j = 0; j < encoder->dest_layout->ext_count; ++j)
                 encoder->dest_layout[i].extents[j].state = PHO_EXT_ST_SYNC;
