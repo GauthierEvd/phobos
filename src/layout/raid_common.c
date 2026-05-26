@@ -56,6 +56,15 @@ size_t n_total_extents(struct raid_io_context *io_context)
     return io_context->n_data_extents + io_context->n_parity_extents;
 }
 
+size_t get_n_extents(struct raid_io_context *io_context,
+                     enum processor_type type)
+{
+    if (type == PHO_PROC_REBUILDER)
+        return io_context->rebuild.current_split_missing_count;
+    else
+        return n_total_extents(io_context);
+}
+
 static void free_extent_address_buff(void *void_extent)
 {
     struct extent *extent = void_extent;
@@ -580,32 +589,65 @@ static void raid_reader_eraser_build_allocation_req(
     }
 }
 
-static void raid_io_context_set_extent_info(struct raid_io_context *io_context,
-                                            pho_resp_write_elt_t **medium,
-                                            int extent_idx, size_t offset)
+static void raid_set_extent_info(struct extent *extent,
+                                 pho_resp_write_elt_t *medium,
+                                 int idx, size_t offset)
+{
+    extent->uuid = generate_uuid();
+    extent->layout_idx = idx;
+    extent->offset = offset;
+    extent->media.family = (enum rsc_family)medium->med_id->family;
+
+    pho_id_name_set(&extent->media, medium->med_id->name,
+                    medium->med_id->library);
+}
+
+static void raid_writer_set_extent_info(struct raid_io_context *io_context,
+                                        pho_resp_write_elt_t **medium,
+                                        int extent_idx, size_t offset)
 {
     struct extent *extents = io_context->write.output.extents;
     int i;
 
-    for (i = 0; i < n_total_extents(io_context); i++) {
-        extents[i].uuid = generate_uuid();
-        extents[i].layout_idx = extent_idx + i;
-        extents[i].offset = offset;
-        extents[i].media.family = (enum rsc_family)medium[i]->med_id->family;
+    for (i = 0; i < n_total_extents(io_context); i++)
+        raid_set_extent_info(&extents[i], medium[i], extent_idx + i, offset);
+}
 
-        pho_id_name_set(&extents[i].media, medium[i]->med_id->name,
-                        medium[i]->med_id->library);
+static void raid_rebuilder_set_extent_info(struct raid_io_context *io_context,
+                                           pho_resp_write_elt_t **medium,
+                                           struct layout_info *layout)
+{
+    size_t n_extents_per_split = n_total_extents(io_context);
+    struct extent *extents = io_context->rebuild.output.extents;
+    int j = 0;
+    int i;
+
+    for (i = io_context->current_split * n_extents_per_split;
+         i < (io_context->current_split + 1) * n_extents_per_split;
+         i++) {
+        if (!extent_from_layout_idx(layout->extents, layout->ext_count, i)) {
+            raid_set_extent_info(&extents[j], medium[j], i,
+                                 io_context->current_split_offset);
+            j++;
+        }
     }
 }
 
 static void raid_io_context_set_extent_size(struct raid_io_context *io_context,
+                                            enum processor_type type,
                                             size_t extent_size,
                                             size_t extent_size_remainder)
 {
-    struct extent *extents = io_context->write.output.extents;
+    struct output_io_context *output;
+    struct extent *extents;
+    size_t n_extents;
     int i;
 
-    for (i = 0; i < n_total_extents(io_context); i++) {
+    n_extents = get_n_extents(io_context, type);
+    output = raid_output_io_context(io_context, type);
+    extents = output->extents;
+
+    for (i = 0; i < n_extents; i++) {
         if (extent_size_remainder > 0)
             extents[i].size = extent_size + (i < extent_size_remainder ||
                                              i >= io_context->n_data_extents ?
@@ -616,12 +658,14 @@ static void raid_io_context_set_extent_size(struct raid_io_context *io_context,
 }
 
 static void raid_io_context_setmd(struct raid_io_context *io_context,
+                                  enum processor_type type,
                                   const GString *str)
 {
-     struct pho_io_descr *iods = io_context->iods;
-     int i;
+    size_t n_extents = get_n_extents(io_context, type);
+    struct pho_io_descr *iods = io_context->iods;
+    int i;
 
-     for (i = 0; i < n_total_extents(io_context); ++i) {
+    for (i = 0; i < n_extents; ++i) {
         if (!gstring_empty(str))
             pho_attr_set(&iods[i].iod_attrs, PHO_EA_UMD_NAME, str->str);
     }
@@ -1182,55 +1226,46 @@ static int prepare_writer_release_request(struct pho_data_processor *proc,
     return 0;
 }
 
-static int raid_writer_split_setup(struct pho_data_processor *proc,
-                                   pho_resp_t *new_resp)
+static int common_split_setup(struct pho_data_processor *proc)
 {
     struct raid_io_context *io_context =
         &((struct raid_io_context *)
           proc->private_writer)[proc->current_target];
-    size_t extent_size_remainder = 0;
+    struct output_io_context *output;
     struct pho_io_descr *iods;
     pho_resp_write_t *wresp;
-    size_t extent_size = 0;
     size_t n_extents;
-    int rc;
+    int rc = 0;
     int i;
 
-    ENTRY;
-
+    output = raid_output_io_context(io_context, proc->type);
+    n_extents = get_n_extents(io_context, proc->type);
     wresp = proc->write_resp->walloc;
-    n_extents = n_total_extents(io_context);
     iods = io_context->iods;
 
     if (wresp->n_media != n_extents)
         LOG_RETURN(-EINVAL, "Invalid number of media return by phobosd. "
-                            "Expected %lu, got %lu",
+                   "Expected %lu, got %lu",
                    n_extents, wresp->n_media);
 
     for (i = 0; i < n_extents; ++i) {
         rc = get_io_adapter((enum fs_type)wresp->media[i]->fs_type,
                             &iods[i].iod_ioa);
         if (rc)
-            LOG_RETURN(rc, "Unable to get io_adapter in raid encoder");
+            LOG_RETURN(rc, "Unable to get io_adapter in raid %s",
+                       processor_type2str(proc));
 
         iods[i].iod_size = 0;
         iods[i].iod_flags = PHO_IO_REPLACE | PHO_IO_NO_REUSE;
     }
 
-    raid_io_context_setmd(io_context, io_context->write.output.user_md);
+    raid_io_context_setmd(io_context, proc->type, output->user_md);
 
-    extent_size = (proc->object_size - proc->writer_offset) /
-                  io_context->n_data_extents;
-    extent_size_remainder = (proc->object_size - proc->writer_offset) %
-                            io_context->n_data_extents;
-    for (i = 0; i < n_extents; i++) {
-        if (wresp->media[i]->avail_size < extent_size) {
-            extent_size = wresp->media[i]->avail_size;
-            extent_size_remainder = 0;
-        }
-    }
-
-    raid_io_context_set_extent_info(io_context, wresp->media,
+    if (proc->type == PHO_PROC_REBUILDER)
+        raid_rebuilder_set_extent_info(io_context, wresp->media,
+                                       proc->src_layout);
+    else
+        raid_writer_set_extent_info(io_context, wresp->media,
                                     io_context->current_split * n_extents,
                                     proc->writer_offset);
 
@@ -1244,6 +1279,42 @@ static int raid_writer_split_setup(struct pho_data_processor *proc,
             io_context->current_split_chunk_size = proc->io_block_size;
         else
             set_current_split_chunk_size(io_context, n_extents);
+    }
+
+    return rc;
+}
+
+static int raid_writer_split_setup(struct pho_data_processor *proc,
+                                   pho_resp_t *new_resp)
+{
+    struct raid_io_context *io_context =
+        &((struct raid_io_context *)
+          proc->private_writer)[proc->current_target];
+    size_t extent_size_remainder = 0;
+    pho_resp_write_t *wresp;
+    size_t extent_size = 0;
+    size_t n_extents;
+    int rc;
+    int i;
+
+    ENTRY;
+
+    rc = common_split_setup(proc);
+    if (rc)
+        return rc;
+
+    wresp = proc->write_resp->walloc;
+    n_extents = n_total_extents(io_context);
+
+    extent_size = (proc->object_size - proc->writer_offset) /
+                  io_context->n_data_extents;
+    extent_size_remainder = (proc->object_size - proc->writer_offset) %
+                            io_context->n_data_extents;
+    for (i = 0; i < n_extents; i++) {
+        if (wresp->media[i]->avail_size < extent_size) {
+            extent_size = wresp->media[i]->avail_size;
+            extent_size_remainder = 0;
+        }
     }
 
     proc->writer_stripe_size = io_context->current_split_chunk_size *
@@ -1260,7 +1331,7 @@ static int raid_writer_split_setup(struct pho_data_processor *proc,
                                  extent_size_remainder)
         extent_size -= extent_size % io_context->current_split_chunk_size;
 
-    raid_io_context_set_extent_size(io_context, extent_size,
+    raid_io_context_set_extent_size(io_context, proc->type, extent_size,
                                     extent_size_remainder);
 
     /* keep a buff.size compliant with new stripe size */
@@ -1845,6 +1916,40 @@ int raid_eraser_processor_step(struct pho_data_processor *proc,
     (*n_reqs)++;
 
     return rc;
+}
+
+__attribute__((unused))
+static int raid_rebuilder_split_setup(struct pho_data_processor *proc)
+{
+    struct raid_io_context *io_context = proc->private_writer;
+    int rc;
+
+    ENTRY;
+
+    rc = common_split_setup(proc);
+    if (rc)
+        return rc;
+
+    raid_io_context_set_extent_size(
+                            io_context, proc->type,
+                            io_context->rebuild.current_split_extent_size, 0);
+
+    proc->writer_stripe_size = io_context->current_split_chunk_size;
+
+    if (proc->buff.size && proc->buff.size % proc->writer_stripe_size != 0)
+        pho_buff_realloc(&proc->buff, lcm(proc->buff.size,
+                                          proc->writer_stripe_size));
+
+    for (int i = 0; i < io_context->nb_hashes; i++) {
+        rc = extent_hash_reset(&io_context->hashes[i]);
+        if (rc)
+            return rc;
+    }
+
+    io_context->current_split_size =
+        io_context->rebuild.current_split_extent_size;
+
+    return io_context->ops->set_extra_attrs(proc);
 }
 
 int extent_hash_init(struct extent_hash *hash, bool use_md5, bool use_xxhash)
