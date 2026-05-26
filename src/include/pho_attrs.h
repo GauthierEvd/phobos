@@ -50,6 +50,9 @@ const char *pho_attr_get(struct pho_attrs *md, const char *key);
 /** empty the attribute list and release memory */
 void pho_attrs_free(struct pho_attrs *md);
 
+/** Copy an attribute list in another */
+int pho_attrs_copy(const struct pho_attrs *src, struct pho_attrs *dst);
+
 /** remove an attr from the an attribute set */
 void pho_attr_remove(struct pho_attrs *md, const char *key);
 

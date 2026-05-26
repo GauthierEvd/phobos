@@ -28,6 +28,7 @@
 
 #include "pho_attrs.h"
 #include "pho_common.h"
+#include "pho_io.h"
 #include "assert.h"
 #include <malloc.h>
 #include <string.h>
@@ -75,6 +76,23 @@ void pho_attr_set(struct pho_attrs *md, const char *key, const char *value)
 
     /* use ght_replace, so that previous key and values are freed */
     g_hash_table_replace(md->attr_set, safe_key, safe_value);
+}
+
+int pho_attrs_copy(const struct pho_attrs *src, struct pho_attrs *dst)
+{
+    GString *attrs = g_string_new(NULL);
+    int rc;
+
+    rc = pho_attrs_to_json(src, attrs, PHO_ATTR_BACKUP_JSON_FLAGS);
+    if (rc) {
+        g_string_free(attrs, TRUE);
+        return rc;
+    }
+
+    rc = pho_json_to_attrs(dst, attrs->str);
+    g_string_free(attrs, TRUE);
+
+    return rc;
 }
 
 /** callback function to dump a JSON to a GString
