@@ -197,6 +197,11 @@ int raid_eraser_init(struct pho_data_processor *eraser,
                      const struct pho_proc_ops *enc_ops,
                      const struct raid_ops *raid_ops);
 
+int raid_rebuilder_init(struct pho_data_processor *rebuilder,
+                        const struct module_desc *module,
+                        const struct pho_proc_ops *enc_ops,
+                        const struct raid_ops *raid_ops);
+
 int raid_reader_processor_step(struct pho_data_processor *proc,
                                pho_resp_t *resp, pho_req_t **reqs,
                                size_t *n_reqs);
@@ -229,7 +234,7 @@ int raid_locate(struct dss_handle *dss, struct layout_info *layout,
                 int *nb_new_lock);
 
 void raid_reader_processor_destroy(struct pho_data_processor *proc);
-void raid_writer_processor_destroy(struct pho_data_processor *proc);
+void raid_writer_rebuilder_processor_destroy(struct pho_data_processor *proc);
 void raid_eraser_processor_destroy(struct pho_data_processor *proc);
 
 size_t n_total_extents(struct raid_io_context *io_context);

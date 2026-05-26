@@ -83,7 +83,7 @@ static struct raid_ops RAID4_OPS = {
 
 static const struct pho_proc_ops RAID4_WRITER_PROCESSOR_OPS = {
     .step       = raid_writer_processor_step,
-    .destroy    = raid_writer_processor_destroy,
+    .destroy    = raid_writer_rebuilder_processor_destroy,
 };
 
 static const struct pho_proc_ops RAID4_READER_PROCESSOR_OPS = {

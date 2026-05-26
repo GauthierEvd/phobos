@@ -260,7 +260,7 @@ static int raid1_extra_attrs(struct pho_data_processor *proc)
 
 static const struct pho_proc_ops RAID1_WRITER_PROCESSOR_OPS = {
     .step       = raid_writer_processor_step,
-    .destroy    = raid_writer_processor_destroy,
+    .destroy    = raid_writer_rebuilder_processor_destroy,
 };
 
 static const struct pho_proc_ops RAID1_READER_PROCESSOR_OPS = {

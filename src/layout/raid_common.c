@@ -63,14 +63,44 @@ static void free_extent_address_buff(void *void_extent)
     free(extent->address.buff);
 }
 
+static int common_rebuilder_writer_init(struct raid_io_context *io_context,
+                                        enum processor_type type,
+                                        struct pho_attrs *attrs)
+{
+    struct output_io_context *output = raid_output_io_context(io_context, type);
+    size_t n_extents = n_total_extents(io_context);
+    int rc = 0;
+
+    /* Build the extent attributes from the object ID and the user provided
+     * attributes. This information will be attached to backend objects for
+     * "self-description"/"rebuild" purpose.
+     */
+    output->user_md = g_string_new(NULL);
+    rc = pho_attrs_to_json(attrs, output->user_md, PHO_ATTR_BACKUP_JSON_FLAGS);
+    if (rc) {
+        g_string_free(output->user_md, TRUE);
+        LOG_RETURN(rc, "Failed to convert attributes to JSON");
+    }
+
+    output->written_extents = g_array_new(FALSE, TRUE, sizeof(struct extent));
+    g_array_set_clear_func(output->written_extents, free_extent_address_buff);
+
+    output->to_release_media = g_hash_table_new_full(g_pho_id_hash,
+                                                     g_pho_id_equal,
+                                                     free,
+                                                     free);
+    io_context->iods = xcalloc(n_extents, sizeof(*io_context->iods));
+    output->extents = xcalloc(n_extents, sizeof(*output->extents));
+
+    return rc;
+}
+
 int raid_encoder_init(struct pho_data_processor *encoder,
                       const struct module_desc *module,
                       const struct pho_proc_ops *enc_ops,
                       const struct raid_ops *raid_ops)
 {
-    struct raid_io_context *io_context = encoder->private_writer;
-    size_t n_extents = n_total_extents(io_context);
-    struct output_io_context *output;
+    struct raid_io_context *io_context;
     int rc;
     int i;
 
@@ -82,8 +112,6 @@ int raid_encoder_init(struct pho_data_processor *encoder,
     for (i = 0; i < encoder->xfer->xd_ntargets; i++) {
         io_context =
             &((struct raid_io_context *) encoder->private_writer)[i];
-        output = raid_output_io_context(io_context, encoder->type);
-        n_extents = n_total_extents(io_context);
 
         if (encoder->xfer->xd_targets[i].xt_fd < 0)
             LOG_RETURN(-EBADF,
@@ -98,29 +126,10 @@ int raid_encoder_init(struct pho_data_processor *encoder,
         encoder->dest_layout[i].layout_desc.mod_major = module->mod_major;
         io_context->ops = raid_ops;
 
-        /* Build the extent attributes from the object ID and the user provided
-         * attributes. This information will be attached to backend objects for
-         * "self-description"/"rebuild" purpose.
-         */
-        output->user_md = g_string_new(NULL);
-        rc = pho_attrs_to_json(&encoder->xfer->xd_targets[i].xt_attrs,
-                               output->user_md,
-                               PHO_ATTR_BACKUP_JSON_FLAGS);
-        if (rc) {
-            g_string_free(output->user_md, TRUE);
-            LOG_RETURN(rc, "Failed to convert attributes to JSON");
-        }
-
-        output->written_extents = g_array_new(FALSE, TRUE,
-                                                        sizeof(struct extent));
-        g_array_set_clear_func(output->written_extents,
-                               free_extent_address_buff);
-
-        output->to_release_media =
-            g_hash_table_new_full(g_pho_id_hash, g_pho_id_equal, free, free);
-
-        io_context->iods = xcalloc(n_extents, sizeof(*io_context->iods));
-        output->extents = xcalloc(n_extents, sizeof(*output->extents));
+        rc = common_rebuilder_writer_init(io_context, encoder->type,
+                                        &encoder->xfer->xd_targets[i].xt_attrs);
+        if (rc)
+            return rc;
     }
 
     return 0;
@@ -137,7 +146,7 @@ int raid_decoder_init(struct pho_data_processor *decoder,
     if (decoder->xfer->xd_targets->xt_fd < 0)
         LOG_RETURN(rc = -EBADF, "Invalid decoder xfer file descriptor");
 
-    assert(is_decoder(decoder) || is_copier(decoder));
+    assert(is_decoder(decoder) || is_copier(decoder) || is_rebuilder(decoder));
 
     decoder->reader_ops = enc_ops;
     io_context->ops = raid_ops;
@@ -164,6 +173,30 @@ int raid_eraser_init(struct pho_data_processor *eraser,
 
     io_context->iods = xcalloc(n_extents, sizeof(*io_context->iods));
     return 0;
+}
+
+int raid_rebuilder_init(struct pho_data_processor *rebuilder,
+                        const struct module_desc *module,
+                        const struct pho_proc_ops *enc_ops,
+                        const struct raid_ops *raid_ops)
+{
+    struct raid_io_context *io_context = rebuilder->private_writer;
+    int rc;
+
+    rebuilder->writer_ops = enc_ops;
+    io_context->ops = raid_ops;
+
+    rebuilder->dest_layout->layout_desc.mod_name = module->mod_name;
+    rebuilder->dest_layout->layout_desc.mod_minor = module->mod_minor;
+    rebuilder->dest_layout->layout_desc.mod_major = module->mod_major;
+
+    rc = pho_attrs_copy(&rebuilder->src_layout->layout_desc.mod_attrs,
+                        &rebuilder->dest_layout->layout_desc.mod_attrs);
+    if (rc)
+        return rc;
+
+    return common_rebuilder_writer_init(io_context, rebuilder->type,
+                                        &rebuilder->xfer->xd_targets->xt_attrs);
 }
 
 static void read_resp_destroy(struct read_io_context *read_context)
@@ -236,7 +269,7 @@ void raid_eraser_processor_destroy(struct pho_data_processor *proc)
     proc->private_eraser = NULL;
 }
 
-void raid_writer_processor_destroy(struct pho_data_processor *proc)
+void raid_writer_rebuilder_processor_destroy(struct pho_data_processor *proc)
 {
     struct raid_io_context *io_context;
     struct output_io_context *output;
