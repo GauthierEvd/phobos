@@ -65,6 +65,15 @@ size_t get_n_extents(struct raid_io_context *io_context,
         return n_total_extents(io_context);
 }
 
+static struct pho_xfer_put_params *get_put_params(
+                                            struct pho_data_processor *proc)
+{
+    if (proc->type == PHO_PROC_REBUILDER || proc->type == PHO_PROC_COPIER)
+        return &proc->xfer->xd_params.copy.put;
+    else
+        return &proc->xfer->xd_params.put;
+}
+
 static void free_extent_address_buff(void *void_extent)
 {
     struct extent *extent = void_extent;
@@ -425,9 +434,7 @@ static int xfer_remain_to_write_per_medium(
 
     *size = 0;
 
-    rc = get_cfg_fs_block_size(proc->xfer->xd_op == PHO_XFER_OP_COPY ?
-                                proc->xfer->xd_params.copy.put.family :
-                                proc->xfer->xd_params.put.family,
+    rc = get_cfg_fs_block_size(get_put_params(proc)->family,
                                &fs_block_size);
     if (rc)
         return rc;
@@ -465,25 +472,24 @@ static int xfer_remain_to_write_per_medium(
     return 0;
 }
 
-static void raid_writer_build_allocation_req(struct pho_data_processor *proc,
+static void raid_writer_rebuilder_build_allocation_req(
+                                             struct pho_data_processor *proc,
                                              pho_req_t *req, size_t size)
 {
     struct raid_io_context *io_context =
         &((struct raid_io_context *)
           proc->private_writer)[proc->current_target];
-    size_t n_extents = n_total_extents(io_context);
     struct pho_xfer_put_params *put_params;
+    size_t n_extents;
     size_t *n_tags;
     int i, j;
 
     ENTRY;
 
+    n_extents = get_n_extents(io_context, proc->type);
     n_tags = xcalloc(n_extents, sizeof(*n_tags));
 
-    if (proc->xfer->xd_op == PHO_XFER_OP_COPY)
-        put_params = &proc->xfer->xd_params.copy.put;
-    else
-        put_params = &proc->xfer->xd_params.put;
+    put_params = get_put_params(proc);
 
     for (i = 0; i < n_extents; ++i)
             n_tags[i] = put_params->tags.count;
@@ -1198,7 +1204,8 @@ release:
    return rc;
 }
 
-static int prepare_writer_release_request(struct pho_data_processor *proc,
+static int prepare_writer_rebuilder_release_request(
+                                          struct pho_data_processor *proc,
                                           pho_resp_t *new_resp)
 {
     int rc;
@@ -1638,7 +1645,7 @@ int raid_writer_processor_step(struct pho_data_processor *proc,
 
         *reqs = xcalloc(1, sizeof(**reqs));
         *n_reqs = 1;
-        raid_writer_build_allocation_req(proc, *reqs,
+        raid_writer_rebuilder_build_allocation_req(proc, *reqs,
                                          all_target_remain_to_write_per_medium);
         proc->need_alloc_response_to_write = true;
         goto set_target_rc;
@@ -1668,7 +1675,7 @@ int raid_writer_processor_step(struct pho_data_processor *proc,
 
     /* manage received allocation and partial release */
     if (resp) {
-        rc = prepare_writer_release_request(proc, resp);
+        rc = prepare_writer_rebuilder_release_request(proc, resp);
         if (rc)
             goto set_target_rc;
 
@@ -1760,7 +1767,7 @@ check_for_release:
     }
 
     if (need_new_alloc) {
-        raid_writer_build_allocation_req(proc, *reqs + *n_reqs,
+        raid_writer_rebuilder_build_allocation_req(proc, *reqs + *n_reqs,
                                          all_target_remain_to_write_per_medium);
         (*n_reqs)++;
         proc->need_alloc_response_to_write = true;
@@ -1943,7 +1950,6 @@ int raid_eraser_processor_step(struct pho_data_processor *proc,
     return rc;
 }
 
-__attribute__((unused))
 static int raid_rebuilder_split_setup(struct pho_data_processor *proc)
 {
     struct raid_io_context *io_context = proc->private_writer;
@@ -1977,7 +1983,6 @@ static int raid_rebuilder_split_setup(struct pho_data_processor *proc)
     return io_context->ops->set_extra_attrs(proc);
 }
 
-__attribute__((unused))
 static void raid_rebuilder_split_close(struct pho_data_processor *proc, int *rc)
 {
     struct raid_io_context *io_context = proc->private_writer;
@@ -1997,7 +2002,6 @@ static void raid_rebuilder_split_close(struct pho_data_processor *proc, int *rc)
     io_context->rebuild.current_split_missing_count = 0;
 }
 
-__attribute__((unused))
 static int raid_rebuilder_handle_release_resp(struct pho_data_processor *proc,
                                               pho_resp_release_t *resp)
 {
@@ -2015,6 +2019,152 @@ static int raid_rebuilder_handle_release_resp(struct pho_data_processor *proc,
 
         common_fill_layout(output, proc->dest_layout);
         proc->done = true;
+    }
+
+    return rc;
+}
+
+static size_t raid_rebuilder_seek_next_missing_split(
+                                        struct pho_data_processor *proc)
+{
+    struct raid_io_context *io_context = proc->private_writer;
+    size_t n_extents_per_split = n_total_extents(io_context);
+    struct layout_info *layout = proc->src_layout;
+    size_t max_layout_idx;
+    int i;
+
+    ENTRY;
+
+    max_layout_idx = layout->extents[layout->ext_count - 1].layout_idx;
+
+    while (io_context->current_split * n_extents_per_split <= max_layout_idx) {
+        size_t first_layout_idx =
+            io_context->current_split * n_extents_per_split;
+
+        size_t n_extents =
+            current_split_src_layout_n_extent(proc, PHO_PROC_ENCODER);
+        if (n_extents == n_extents_per_split) {
+            io_context->current_split++;
+            continue;
+        }
+
+        io_context->rebuild.current_split_missing_count =
+            n_extents_per_split - n_extents;
+
+        /* Get offset and size of the first extent of this split */
+        for (i = 0; i < layout->ext_count; i++) {
+            struct extent *extent = &layout->extents[i];
+
+            if (extent->layout_idx < first_layout_idx)
+                continue;
+
+            io_context->current_split_offset = extent->offset;
+            proc->writer_offset = extent->offset;
+            io_context->rebuild.current_split_extent_size = extent->size;
+
+            return true;
+        }
+    }
+
+    return false;
+}
+
+int raid_rebuilder_processor_step(struct pho_data_processor *proc,
+                                  pho_resp_t *resp, pho_req_t **reqs,
+                                  size_t *n_reqs)
+{
+    struct raid_io_context *io_context = proc->private_writer;
+    bool need_full_release = false;
+    bool need_new_alloc = false;
+    bool split_ended = false;
+    bool stop_io = false;
+    int rc = 0;
+
+    ENTRY;
+
+    /* First init step from the data processor: return first allocation */
+    if (!resp && !proc->buff.size) {
+        if (!raid_rebuilder_seek_next_missing_split(proc)) {
+            proc->done = true;
+            return 0;
+        }
+
+        *reqs = xcalloc(1, sizeof(**reqs));
+        *n_reqs = 1;
+        raid_writer_rebuilder_build_allocation_req(proc, *reqs,
+                                 io_context->rebuild.current_split_extent_size);
+
+        goto set_target_rc;
+    }
+
+    /* manage error */
+    if (resp && pho_response_is_error(resp)) {
+        proc->done = true;
+        LOG_GOTO(set_target_rc, rc = resp->error->rc,
+                 "%s %d received error %s to last request",
+                 processor_type2str(proc), resp->req_id,
+                 pho_srl_error_kind_str(resp->error));
+    }
+
+    /* manage release */
+    if (resp && pho_response_is_release(resp)) {
+        rc = raid_rebuilder_handle_release_resp(proc, resp->release);
+        goto set_target_rc;
+    }
+
+    /* manage received allocation */
+    if (resp) {
+        rc = prepare_writer_rebuilder_release_request(proc, resp);
+        if (rc)
+            goto set_target_rc;
+
+        rc = raid_rebuilder_split_setup(proc);
+        if (rc)
+            goto check_for_release;
+    }
+
+    if (proc->xfer->xd_targets[proc->current_target].xt_rc != 0) {
+        stop_io = true;
+        rc = proc->xfer->xd_targets[proc->current_target].xt_rc;
+        goto check_for_release;
+    }
+
+    /* write */
+    if (!proc->buff.size) {
+        rc = 0;
+        goto set_target_rc;
+    }
+
+    rc = io_context->ops->rebuild_from_buff(proc);
+
+    split_ended = (proc->writer_offset - io_context->current_split_offset) ==
+                    io_context->rebuild.current_split_extent_size;
+    if (split_ended)
+        io_context->rebuild.missing_extents_remaining -=
+            io_context->rebuild.current_split_missing_count;
+
+    if (split_ended || rc)
+        raid_rebuilder_split_close(proc, &rc);
+
+check_for_release:
+    need_full_release = rc || split_ended;
+    need_new_alloc = !rc && split_ended &&
+                     raid_rebuilder_seek_next_missing_split(proc);
+
+    if (need_full_release)
+        complete_and_transfer_release(proc, rc, reqs, n_reqs, stop_io);
+
+    if (need_new_alloc) {
+        raid_writer_rebuilder_build_allocation_req(proc, *reqs + *n_reqs,
+                                io_context->rebuild.current_split_extent_size);
+        (*n_reqs)++;
+    }
+
+set_target_rc:
+    if (rc) {
+        if (proc->xfer->xd_rc == 0)
+            proc->xfer->xd_rc = rc;
+        proc->xfer->xd_targets->xt_rc = rc;
     }
 
     return rc;

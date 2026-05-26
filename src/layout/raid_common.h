@@ -179,6 +179,7 @@ struct raid_ops {
                                  size_t *chunk_size);
     int (*read_into_buff)(struct pho_data_processor *proc);
     int (*write_from_buff)(struct pho_data_processor *proc);
+    int (*rebuild_from_buff)(struct pho_data_processor *proc);
     int (*set_extra_attrs)(struct pho_data_processor *proc);
 };
 
@@ -212,13 +213,9 @@ int raid_eraser_processor_step(struct pho_data_processor *proc,
                                pho_resp_t *resp, pho_req_t **reqs,
                                size_t *n_reqs);
 
-int raid_processor_step(struct pho_data_processor *proc, pho_resp_t *resp,
-                        pho_req_t **reqs, size_t *n_reqs);
-
-/**
- * Generic implementation of raid_ops::delete_split
- */
-int raid_delete_split(struct pho_data_processor *eraser);
+int raid_rebuilder_processor_step(struct pho_data_processor *proc,
+                                  pho_resp_t *resp, pho_req_t **reqs,
+                                  size_t *n_reqs);
 
 /**
  * Generic implementation of pho_layout_module_ops::locate
