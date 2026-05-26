@@ -1,5 +1,5 @@
 #
-#  All rights reserved (c) 2014-2025 CEA/DAM.
+#  All rights reserved (c) 2014-2026 CEA/DAM.
 #
 #  This file is part of Phobos.
 #
@@ -51,7 +51,6 @@ class CopyCreateOptHandler(CreateOptHandler):
                             help='name of the copy to read from')
         add_put_arguments(parser)
 
-
 class CopyDeleteOptHandler(DeleteOptHandler):
     """Option handler for delete action of copy target"""
     descr = 'delete copy of object'
@@ -59,9 +58,16 @@ class CopyDeleteOptHandler(DeleteOptHandler):
     @classmethod
     def add_options(cls, parser):
         super(CopyDeleteOptHandler, cls).add_options(parser)
-        parser.add_argument('oid', help='targeted object')
-        parser.add_argument('copy', help='copy name')
-
+        parser.add_argument('oid', nargs='?',
+                            help="targeted object, mandatory unless "
+                                 "--all-incomplete is set")
+        parser.add_argument('copy', nargs='?',
+                            help="copy name, mandatory unless "
+                                 "--all-incomplete is set")
+        parser.add_argument("--all-incomplete", action="store_true",
+                            help="Delete all incomplete copies that could be "
+                                 "located on this node. If set, all other "
+                                 "options are ignored.")
 
 class CopyListOptHandler(ListOptHandler):
     """Option handler for list action of copy target"""
@@ -127,14 +133,32 @@ class CopyOptHandler(XferOptHandler):
         self.logger.info("Object '%s' successfully copied as '%s'", oid,
                          copy_to_put)
 
+    def delete_incomplete(self):
+        """Incomplete copies deletion"""
+        client = UtilClient()
+        try:
+            client.delete_incomplete_copy()
+        except EnvironmentError as err:
+            self.logger.error(env_error_format(err))
+            sys.exit(abs(err.errno))
+
     def exec_delete(self):
         """Copy deletion"""
+        if self.params.get('all_incomplete'):
+            return self.delete_incomplete()
+
         client = UtilClient()
 
         copy = self.params.get('copy')
+        oid = self.params.get('oid')
+
+        if not oid or not copy:
+            self.logger.error("oid and copy are mandatory, "
+                              "unless --all-incomplete is set")
+            sys.exit(os.EX_USAGE)
+
         deprec = self.params.get('deprecated')
         deprec_only = self.params.get('deprecated_only')
-        oid = self.params.get('oid')
         uuid = self.params.get('uuid')
         version = self.params.get('version')
 

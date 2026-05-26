@@ -2,6 +2,8 @@
 
 ## Next
  * WARNING: the stat dev.umount_error is changed to dev.umount_errors .
+ * add the "phobos copy delete_incomplete" command to delete incomplete copies
+   and the related objects
 
 ## 3.3.1
  * WARNING: the `--orphan` from `phobos extent list` changed to `--state`. It

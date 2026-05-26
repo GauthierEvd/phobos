@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-#  All rights reserved (c) 2014-2025 CEA/DAM.
+#  All rights reserved (c) 2014-2026 CEA/DAM.
 #
 #  This file is part of Phobos.
 #
@@ -375,6 +375,46 @@ function removed_add_to_media
         error "Dir format should success"
 }
 
+function delete_incomplete_object() {
+    local obj_status=$1
+
+    for split_idx in 0 1; do
+        $phobos copy create -f dir --tags copy --layout raid1 \
+            --lyt-params "repl_count=2" obj copy ||
+                error "Copy create should success"
+
+        if [[ "${obj_status}" == "deprecated" ]]; then
+            # we can currently only create copy on living object with the CLI
+            $phobos delete obj || error "Deleting object should success"
+        fi
+
+        obj_media=($($phobos extent list -f json -o media_name -c copy obj | \
+                     jq -r ".[0].media_name[]"))
+        for delete_idx in $((split_idx * 2)) $((split_idx * 2 +1)); do
+                removed_add_to_media ${obj_media[${delete_idx}]}
+        done
+
+        $valg_phobos copy delete --all-incomplete ||
+            error "Split ${split_idx} lacking," \
+                  "deleting incomplete copy of a ${obj_status} object should" \
+                  "success"
+
+        copy_count="$($phobos copy list -c copy | wc -l)"
+        ((copy_count == 0)) ||
+            error "Split ${split_idx} lacking," \
+                  "no copy should remain after deleting incomplete copy" \
+                  "of a ${obj_status} object"
+        ext_count="$($phobos extent list --degroup -o address | wc -l)"
+        ((ext_count == 1)) ||
+            error "Split ${split_idx} lacking," \
+                  "1 extent should remain for the main copy of the object" \
+                  "after deleting incomplete copy of a ${obj_status} object"
+        if [[ "${obj_status}" == "deprecated" ]]; then
+            $phobos undelete obj || error "Undeleting object should success"
+        fi
+    done
+}
+
 function test_copy_deleted_dir_incomplete() {
     local obj_media="$DIR_TEST_IN/tmp1"
     local copy_count
@@ -477,16 +517,11 @@ function test_copy_deleted_dir_incomplete() {
         --lyt-params "repl_count=2" obj copy ||
             error "Copy create should success"
 
-    waive_lrs
-
     obj_media=($($phobos extent list -f json -o media_name -c copy obj | \
                  jq -r ".[0].media_name[]"))
     for delete_idx in 0 1 2 3; do
-        $phobos dir delete --lost ${obj_media[${delete_idx}]} ||
-            error "Dir delete should success"
+        removed_add_to_media ${obj_media[${delete_idx}]}
     done
-
-    invoke_lrs
 
     $valg_phobos copy delete obj copy ||
         error "Dir full incomplete copy deletion should success"
@@ -495,6 +530,33 @@ function test_copy_deleted_dir_incomplete() {
     ((copy_count == 1)) || error "1 copy should remain"
     ext_count="$($phobos extent list --degroup -o address | wc -l)"
     ((ext_count == 1)) || error "1 extent should remain"
+
+    # delete one incomplete copy of a living object
+    delete_incomplete_object living
+
+    # delete one incomplete copy of a deprecated object
+    delete_incomplete_object deprecated
+
+    # incomplete protected by delay
+    $phobos copy create -f dir --tags copy --layout raid1 \
+        --lyt-params "repl_count=2" obj copy ||
+            error "Copy create should success"
+
+    obj_media=($($phobos extent list -f json -o media_name -c copy obj | \
+                 jq -r ".[0].media_name[]"))
+    removed_add_to_media ${obj_media[0]}
+    removed_add_to_media ${obj_media[1]}
+
+    PHOBOS_STORE_delete_incomplete_delay_second="3600" \
+        $valg_phobos copy delete --all-incomplete ||
+        error "Deleting incomplete copy with a delay should success"
+
+    copy_count="$($phobos copy list -c copy | wc -l)"
+    ((copy_count == 1)) ||
+        error "Delay should protect incomplete copy"
+    ext_count="$($phobos extent list --degroup -o address | wc -l)"
+    ((ext_count == 3)) ||
+        error "Delay should protect the extents of the incomplete copy"
 }
 
 TESTS=("setup_dir; test_copy_deleted_dir_incomplete; cleanup_dir"

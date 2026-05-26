@@ -1,5 +1,5 @@
 #
-#  All rights reserved (c) 2014-2025 CEA/DAM.
+#  All rights reserved (c) 2014-2026 CEA/DAM.
 #
 #  This file is part of Phobos.
 #
@@ -364,7 +364,7 @@ class StoreUndeleteOptHandler(BaseResourceOptHandler):
         UndeleteOptHandler(cls).add_options(parser)
 
     def exec_undelete(self):
-        """Undelete objetc"""
+        """Undelete object"""
         client = UtilClient()
         oids = self.params.get('oids')
         uuid = self.params.get('uuid')

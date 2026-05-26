@@ -2,7 +2,7 @@
  * vim:expandtab:shiftwidth=4:tabstop=4:
  */
 /*
- *  All rights reserved (c) 2014-2025 CEA/DAM.
+ *  All rights reserved (c) 2014-2026 CEA/DAM.
  *
  *  This file is part of Phobos.
  *
@@ -2357,9 +2357,13 @@ int phobos_delete_incomplete_copy(void)
     if (rc)
         LOG_GOTO(clean_dss, rc, "Cannot fetch incomplete copies from DSS");
 
-    for (i = 0; i < incomplete_copy_count; i++)
-        rc = rc ? : delete_one_incomplete_copy(&dss, hostname,
-                                               &incomplete_copy_list[i]);
+    for (i = 0; i < incomplete_copy_count; i++) {
+        int rc2;
+
+        rc2 = delete_one_incomplete_copy(&dss, hostname,
+                                         &incomplete_copy_list[i]);
+        rc = rc ? : rc2;
+    }
 
     dss_res_free(incomplete_copy_list, incomplete_copy_count);
 clean_dss:

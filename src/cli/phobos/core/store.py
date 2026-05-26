@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 #
-#  All rights reserved (c) 2014-2025 CEA/DAM.
+#  All rights reserved (c) 2014-2026 CEA/DAM.
 #
 #  This file is part of Phobos.
 #
@@ -593,6 +593,7 @@ class XferClient: # pylint: disable=too-many-instance-attributes
         """Default, empty transfer completion handler."""
 
     def getmd_register(self, oid, data_path, uuid, version, attrs=None):
+        # pylint: disable=too-many-arguments
         """Enqueue a GETMD transfer."""
         self.getmd_session.append(([(oid, data_path, attrs)], 0,
                                    (uuid, version), PHO_XFER_OP_GETMD))
@@ -850,3 +851,10 @@ class UtilClient:
         if rc:
             raise EnvironmentError(rc, f"Failed to delete '{oid}''s copy "
                                    f"'{del_params.copy_name}'")
+
+    @staticmethod
+    def delete_incomplete_copy():
+        """Delete incomplete copie"""
+        rc = LIBPHOBOS.phobos_delete_incomplete_copy()
+        if rc:
+            raise EnvironmentError(rc, "Failed to delete incomplete copies")
