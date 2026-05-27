@@ -870,3 +870,26 @@ class UtilClient:
         rc = LIBPHOBOS.phobos_delete_incomplete_copy(dry_run)
         if rc:
             raise EnvironmentError(rc, "Failed to delete incomplete copies")
+
+    @staticmethod
+    def copy_rebuild(oid, uuid, version, params):
+        """Rebuild copy"""
+        n_xfers = c_int(1)
+        xfer_array_type = XferDescriptor * 1
+        xfers = xfer_array_type()
+
+        xfers[0].xd_ntargets = 1
+        target = XferTarget * 1
+        xfers[0].xd_targets = target()
+        xfers[0].xd_targets[0].xt_objid = oid
+        if uuid is not None:
+            xfers[0].xd_targets[0].xt_objuuid = uuid
+        if version is not None:
+            xfers[0].xd_targets[0].xt_version = version
+        xfers[0].xd_params.copy = params
+
+        rc = LIBPHOBOS.phobos_copy_rebuild(xfers, n_xfers)
+
+        if rc:
+            raise EnvironmentError(rc, f"Failed to rebuild '{oid}''s copy "
+                                   f"'{params.put.copy_name}'")

@@ -27,6 +27,7 @@ import sys
 from phobos.cli.action.create import CreateOptHandler
 from phobos.cli.action.delete import DeleteOptHandler
 from phobos.cli.action.list import ListOptHandler
+from phobos.cli.action.rebuild import RebuildOptHandler
 from phobos.cli.common import env_error_format, XferOptHandler
 from phobos.cli.common.args import add_put_arguments, add_object_arguments
 from phobos.cli.common.utils import (check_output_attributes, create_put_params,
@@ -110,6 +111,19 @@ class CopyListOptHandler(ListOptHandler):
         complete:   the copy is complete."""
 
 
+class CopyRebuildHandler(RebuildOptHandler):
+    """Option handler for copy rebuild"""
+    descr = 'rebuild a copy'
+
+    @classmethod
+    def add_options(cls, parser):
+        super(CopyRebuildHandler, cls).add_options(parser)
+
+        parser.add_argument('oid', help='targeted object')
+        parser.add_argument('copy', help='name of the copy to rebuild')
+        add_object_arguments(parser)
+
+
 class CopyOptHandler(XferOptHandler):
     """Option handler for copy target"""
     label = 'copy'
@@ -118,6 +132,7 @@ class CopyOptHandler(XferOptHandler):
         CopyCreateOptHandler,
         CopyDeleteOptHandler,
         CopyListOptHandler,
+        CopyRebuildHandler,
     ]
 
     def exec_create(self):
@@ -220,3 +235,30 @@ class CopyOptHandler(XferOptHandler):
         except EnvironmentError as err:
             self.logger.error(env_error_format(err))
             sys.exit(abs(err.errno))
+
+    def exec_rebuild(self):
+        """Copy rebuild"""
+        oid = self.params.get('oid')
+        copy = self.params.get('copy')
+        deprec = self.params.get('deprecated')
+        deprec_only = self.params.get('deprecated_only')
+        uuid = self.params.get('uuid')
+        version = self.params.get('version')
+
+        scope = get_scope(deprec, deprec_only)
+
+        client = UtilClient()
+
+        put_params = XferPutParams(create_put_params(self, copy))
+        get_params = XferGetParams(GetParams(copy_name=copy,
+                                             node_name=None,
+                                             scope=scope))
+        params = XferCopyParams(get_params, put_params)
+
+        try:
+            client.copy_rebuild(oid, uuid, version, params)
+        except EnvironmentError as err:
+            self.logger.error(env_error_format(err))
+            sys.exit(abs(err.errno))
+
+        self.logger.info("Copy '%s' successfully rebuilded", copy)
