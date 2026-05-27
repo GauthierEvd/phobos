@@ -39,6 +39,8 @@ function setup
           $(mktemp -d "$DIR_TEST_IN/test_pho.XXXX")
           $(mktemp -d "$DIR_TEST_IN/test_pho.XXXX")
           $(mktemp -d "$DIR_TEST_IN/test_pho.XXXX")
+          $(mktemp -d "$DIR_TEST_IN/test_pho.XXXX")
+          $(mktemp -d "$DIR_TEST_IN/test_pho.XXXX")
          )
 
     invoke_lrs
@@ -101,10 +103,8 @@ function extent_xattrs
 {
     local extent=$1
 
-    # We remove the extent_index from the xattr
     getfattr -d -e text "$extent" 2>/dev/null |
-        sed '/^#/d;/^[[:space:]]*$/d' |
-        grep -v '^user\.raid1\.extent_index='
+        sed '/^#/d;/^[[:space:]]*$/d'
 }
 
 function dump_extent_list
@@ -114,6 +114,17 @@ function dump_extent_list
 
     $phobos extent list -f json -o all -c "$copy" "$oid" |
         jq -S '.[0] | del(.media_name, .address, .ext_uuid, .creation_time)'
+}
+
+function contains() {
+    local needle="$1"
+    shift
+
+    for item in "$@"; do
+        [[ "$item" == "$needle" ]] && return 0
+    done
+
+    return 1
 }
 
 function test_copy_rebuild_complete_incomplete
@@ -140,22 +151,50 @@ function test_copy_rebuild_complete_incomplete
     return 0
 }
 
-function test_copy_rebuild_raid1
+function test_copy_rebuild_raid1_impl
 {
-    $phobos put -f dir -l raid1 --lyt-params repl_count=2 \
+    local repl_count=$1
+    shift 1
+    local lost_idxs=("$@")
+
+    $phobos put -f dir -l raid1 --lyt-params repl_count=$repl_count \
             -m "blob=toto" "$INPUT_FILE" oid
 
-    local initial_media=($(get_extent_info oid source media_name))
     local initial_addresses=($(get_extent_info oid source address))
-    local surviving_medium="${initial_media[1]}"
-    local surviving_extent="$surviving_medium/${initial_addresses[1]}"
-    local lost_extent="${initial_media[0]}/${initial_addresses[0]}"
-    local lost_xattrs="$(extent_xattrs $lost_extent)"
+    local initial_media=($(get_extent_info oid source media_name))
     local old_extent_list=$(dump_extent_list oid source)
     local file_size=$(stat -c %s "$INPUT_FILE")
+    local surviving_extents=()
+    local surviving_media=()
+    local media_to_delete=()
+    local deleted_extents=()
+    local deleted_xattrs=()
+
+    # Retrieve media and extents to delete
+    for lost_idx in ${lost_idxs[@]}; do
+        local deleted_medium="${initial_media[$lost_idx]}"
+        local deleted_extent="$deleted_medium/${initial_addresses[$lost_idx]}"
+
+        media_to_delete+=("$deleted_medium")
+        deleted_extents+=("$deleted_extent")
+        deleted_xattrs+=("$(extent_xattrs "$deleted_extent")")
+    done
+
+    # Retrieve surviving media and extents
+    for idx in $(seq 0 $((${#initial_media[@]} - 1))); do
+        # Skip deleted medium
+        if contains $idx ${lost_idxs[@]}; then
+            continue
+        else
+            local surviving_medium="${initial_media[$idx]}"
+
+            surviving_media+=("$surviving_medium")
+            surviving_extents+=("$surviving_medium/${initial_addresses[$idx]}")
+        fi
+    done
 
     waive_lrs
-    $phobos dir delete --lost "${initial_media[0]}"
+    $phobos dir delete --lost ${media_to_delete[@]}
     invoke_lrs
 
     copy_status_should_be oid source readable
@@ -166,36 +205,60 @@ function test_copy_rebuild_raid1
     copy_status_should_be oid source complete
 
     local extent_count=$(copy_extent_count oid source)
-    if (( extent_count != 2 )); then
-        error "There should be 2 extents after rebuild, got $extent_count"
+    if (( extent_count != repl_count )); then
+        error "There should be $repl_count extents after rebuild," \
+              "got $extent_count"
     fi
 
     local rebuilt_media=($(get_extent_info oid source media_name))
     local rebuilt_addresses=($(get_extent_info oid source address))
-    local rebuilt_extent="${rebuilt_media[0]}/${rebuilt_addresses[0]}"
 
-    diff <(printf '%s\n' "$lost_xattrs") <(extent_xattrs "$rebuilt_extent") ||
-        error "Rebuilt extent xattrs should match the surviving extent xattrs"
+    for idx in $(seq 0 $((${#lost_idxs[@]} - 1))); do
+        local idx=${lost_idxs[$i]}
+        local rebuilt_extent="${rebuilt_media[$idx]}/${rebuilt_addresses[$idx]}"
 
-    diff -q "$surviving_extent" "$rebuilt_extent" ||
-        error "Rebuilt extent data should match the surviving extent data"
+        diff <(printf '%s\n' "${deleted_xattrs[$i]}") \
+             <(extent_xattrs "$rebuilt_extent") ||
+            error "Rebuilt extent $idx xattrs should match the deleted " \
+                  "extent xattrs"
+
+        diff -q "${deleted_extents[$i]}" "$rebuilt_extent" ||
+            error "Rebuilt extent $idx data should match the deleted " \
+                  "extent data"
+    done
 
     if [[ "$old_extent_list" != "$(dump_extent_list oid source)" ]]; then
         error "Phobos extent list should be unchanged"
     fi
 
-    # Lock the old medium to use the rebuilt extent
-    $phobos dir lock "$surviving_medium"
+    # Lock the surviving media to use only the rebuilt extents
+    for surviving_medium in ${surviving_media[@]}; do
+        $phobos dir lock "$surviving_medium"
+    done
+
     $phobos get oid "$DIR_TEST_OUT/out"
 
     diff -q "$INPUT_FILE" "$DIR_TEST_OUT/out" ||
         error "Get output should match the original object"
 
-    stat_should_be "$surviving_medium" stats.nb_obj 1
-    stat_should_be "$surviving_medium" stats.logc_spc_used "$file_size"
-    stat_should_be "${rebuilt_media[0]}" stats.nb_obj 1
-    stat_should_be "${rebuilt_media[0]}" stats.logc_spc_used "$file_size"
+    for idx in ${lost_idxs[@]}; do
+        local rebuilt_medium="${rebuilt_media[$idx]}"
+
+        stat_should_be "$rebuilt_medium" stats.nb_obj 1
+        stat_should_be "$rebuilt_medium" stats.logc_spc_used "$file_size"
+    done
+}
+
+function test_copy_rebuild_raid1_2_replica
+{
+    test_copy_rebuild_raid1_impl 2 0
+}
+
+function test_copy_rebuild_raid1_3_replica
+{
+    test_copy_rebuild_raid1_impl 3 0 1
 }
 
 TESTS=("setup; test_copy_rebuild_complete_incomplete; cleanup"
-       "setup; test_copy_rebuild_raid1; cleanup")
+       "setup; test_copy_rebuild_raid1_2_replica; cleanup"
+       "setup; test_copy_rebuild_raid1_3_replica; cleanup")
