@@ -1,0 +1,201 @@
+#!/usr/bin/env bash
+#
+#  All rights reserved (c) 2014-2026 CEA/DAM.
+#
+#  This file is part of Phobos.
+#
+#  Phobos is free software: you can redistribute it and/or modify it under
+#  the terms of the GNU Lesser General Public License as published by
+#  the Free Software Foundation, either version 2.1 of the Licence, or
+#  (at your option) any later version.
+#
+#  Phobos is distributed in the hope that it will be useful,
+#  but WITHOUT ANY WARRANTY; without even the implied warranty of
+#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#  GNU Lesser General Public License for more details.
+#
+#  You should have received a copy of the GNU Lesser General Public License
+#  along with Phobos. If not, see <http://www.gnu.org/licenses/>.
+#
+#
+# Integration test for copy rebuild
+#
+
+test_dir=$(dirname $(readlink -e $0))
+. $test_dir/test_env.sh
+. $test_dir/setup_db.sh
+. $test_dir/test_launch_daemon.sh
+. $test_dir/utils_generation.sh
+
+function setup
+{
+    setup_tables
+    setup_test_dirs
+
+    INPUT_FILE="$DIR_TEST_IN/file"
+    dd if=/dev/urandom of="$INPUT_FILE" bs=64K count=1
+
+    DIRS=(
+          $(mktemp -d "$DIR_TEST_IN/test_pho.XXXX")
+          $(mktemp -d "$DIR_TEST_IN/test_pho.XXXX")
+          $(mktemp -d "$DIR_TEST_IN/test_pho.XXXX")
+         )
+
+    invoke_lrs
+
+    $phobos dir add ${DIRS[@]}
+    $phobos dir format --unlock ${DIRS[@]}
+}
+
+function cleanup
+{
+    waive_lrs
+
+    cleanup_test_dirs
+    drop_tables
+}
+
+function copy_status_should_be
+{
+    local oid=$1
+    local copy=$2
+    local expected=$3
+
+    local status=$($phobos copy list "$oid" --copy-name "$copy" -o status)
+    if [[ "$status" != "$expected" ]]; then
+        error "Copy '$copy' should be '$expected', got '$status'"
+    fi
+}
+
+function get_extent_info
+{
+    local oid=$1
+    local copy=$2
+    local column=$3
+
+    $phobos extent list -f json -o "$column" -c "$copy" "$oid" |
+        jq -r ".[0].$column[]"
+}
+
+function copy_extent_count
+{
+    local oid=$1
+    local copy=$2
+
+    $phobos extent list -o ext_count -c "$copy" "$oid"
+}
+
+function stat_should_be
+{
+    local media=$1
+    local field=$2
+    local expected=$3
+
+    local value="$($phobos dir list -o "$field" "$media")"
+    if [[ "$value" != "$expected" ]]; then
+        error "Media '$media' $field should be '$expected', got '$value'"
+    fi
+}
+
+function extent_xattrs
+{
+    local extent=$1
+
+    # We remove the extent_index from the xattr
+    getfattr -d -e text "$extent" 2>/dev/null |
+        sed '/^#/d;/^[[:space:]]*$/d' |
+        grep -v '^user\.raid1\.extent_index='
+}
+
+function dump_extent_list
+{
+    local oid=$1
+    local copy=$2
+
+    $phobos extent list -f json -o all -c "$copy" "$oid" |
+        jq -S '.[0] | del(.media_name, .address, .ext_uuid, .creation_time)'
+}
+
+function test_copy_rebuild_complete_incomplete
+{
+    $phobos put -f dir "$INPUT_FILE" oid1
+
+    $valg_phobos copy rebuild oid1 source ||
+        error "Copy rebuild on complete copy should have succeeded"
+
+    copy_status_should_be oid1 source complete
+
+    $phobos put -f dir -l raid1 --lyt-params repl_count=2 "$INPUT_FILE" oid2
+
+    waive_lrs
+    local media=($(get_extent_info oid2 source media_name))
+    $phobos dir delete --lost ${media[@]}
+    invoke_lrs
+
+    copy_status_should_be oid2 source incomplete
+
+    $valg_phobos copy rebuild oid2 source &&
+        error "Copy rebuild on incomplete copy should have failed"
+
+    return 0
+}
+
+function test_copy_rebuild_raid1
+{
+    $phobos put -f dir -l raid1 --lyt-params repl_count=2 \
+            -m "blob=toto" "$INPUT_FILE" oid
+
+    local initial_media=($(get_extent_info oid source media_name))
+    local initial_addresses=($(get_extent_info oid source address))
+    local surviving_medium="${initial_media[1]}"
+    local surviving_extent="$surviving_medium/${initial_addresses[1]}"
+    local lost_extent="${initial_media[0]}/${initial_addresses[0]}"
+    local lost_xattrs="$(extent_xattrs $lost_extent)"
+    local old_extent_list=$(dump_extent_list oid source)
+    local file_size=$(stat -c %s "$INPUT_FILE")
+
+    waive_lrs
+    $phobos dir delete --lost "${initial_media[0]}"
+    invoke_lrs
+
+    copy_status_should_be oid source readable
+
+    $valg_phobos copy rebuild oid source ||
+        error "Copy rebuild should have succeeded"
+
+    copy_status_should_be oid source complete
+
+    local extent_count=$(copy_extent_count oid source)
+    if (( extent_count != 2 )); then
+        error "There should be 2 extents after rebuild, got $extent_count"
+    fi
+
+    local rebuilt_media=($(get_extent_info oid source media_name))
+    local rebuilt_addresses=($(get_extent_info oid source address))
+    local rebuilt_extent="${rebuilt_media[0]}/${rebuilt_addresses[0]}"
+
+    diff <(printf '%s\n' "$lost_xattrs") <(extent_xattrs "$rebuilt_extent") ||
+        error "Rebuilt extent xattrs should match the surviving extent xattrs"
+
+    diff -q "$surviving_extent" "$rebuilt_extent" ||
+        error "Rebuilt extent data should match the surviving extent data"
+
+    if [[ "$old_extent_list" != "$(dump_extent_list oid source)" ]]; then
+        error "Phobos extent list should be unchanged"
+    fi
+
+    # Lock the old medium to use the rebuilt extent
+    $phobos dir lock "$surviving_medium"
+    $phobos get oid "$DIR_TEST_OUT/out"
+
+    diff -q "$INPUT_FILE" "$DIR_TEST_OUT/out" ||
+        error "Get output should match the original object"
+
+    stat_should_be "$surviving_medium" stats.nb_obj 1
+    stat_should_be "$surviving_medium" stats.logc_spc_used "$file_size"
+    stat_should_be "${rebuilt_media[0]}" stats.nb_obj 1
+    stat_should_be "${rebuilt_media[0]}" stats.logc_spc_used "$file_size"
+}
+
+TESTS=("setup; test_copy_rebuild_complete_incomplete; cleanup"
+       "setup; test_copy_rebuild_raid1; cleanup")

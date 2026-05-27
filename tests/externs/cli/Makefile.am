@@ -45,6 +45,7 @@ check_SCRIPTS=acceptance.test \
               test_copy_delete.test \
               test_copy_grouping.test \
               test_copy_list.test \
+              test_copy_rebuild.test \
               test_ctime_ordered_read.test \
               test_delete.test \
               test_drive_list.test \
