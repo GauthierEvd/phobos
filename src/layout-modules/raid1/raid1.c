@@ -177,29 +177,20 @@ static int raid1_read_into_buff(struct pho_data_processor *proc)
         return 0;
 }
 
-static int raid1_write_from_buff(struct pho_data_processor *proc)
+static int common_write_from_buff(struct pho_data_processor *proc,
+                                  size_t to_write, size_t n_extents)
 {
     struct raid_io_context *io_context =
         &((struct raid_io_context *)proc->private_writer)[proc->current_target];
-    size_t inside_split_offset = proc->writer_offset -
-                                 io_context->current_split_offset;
-    size_t repl_count = io_context->n_data_extents +
-                        io_context->n_parity_extents;
     struct pho_io_descr *iods = io_context->iods;
     char *buff_start = proc->buff.buff +
                        (proc->writer_offset - proc->buffer_offset);
-    size_t to_write;
-    int rc;
+    int rc = 0;
     int i;
 
     ENTRY;
 
-    /* limit write : split -> buffer */
-    to_write = min(
-                io_context->write.output.extents[0].size - inside_split_offset,
-                proc->reader_offset - proc->writer_offset);
-
-    for (i = 0; i < repl_count; ++i) {
+    for (i = 0; i < n_extents; ++i) {
         rc = data_processor_write_from_buff(proc, &iods[i], to_write, 0);
         if (rc)
             LOG_RETURN(rc,
@@ -217,10 +208,49 @@ static int raid1_write_from_buff(struct pho_data_processor *proc)
     if (proc->writer_offset == proc->reader_offset)
         proc->buffer_offset = proc->writer_offset;
 
+    return rc;
+}
+
+static int raid1_write_from_buff(struct pho_data_processor *proc)
+{
+    struct raid_io_context *io_context =
+        &((struct raid_io_context *)proc->private_writer)[proc->current_target];
+    size_t inside_split_offset = proc->writer_offset -
+                                 io_context->current_split_offset;
+    size_t repl_count = io_context->n_data_extents +
+                        io_context->n_parity_extents;
+    size_t to_write;
+    int rc;
+
+    ENTRY;
+
+    /* limit write : split -> buffer */
+    to_write = min(
+                io_context->write.output.extents[0].size - inside_split_offset,
+                proc->reader_offset - proc->writer_offset);
+
+    rc = common_write_from_buff(proc, to_write, repl_count);
+    if (rc)
+        return rc;
+
     if (proc->writer_offset >= proc->object_size)
         io_context->write.all_is_written = true;
 
     return 0;
+}
+
+static int raid1_rebuild_from_buff(struct pho_data_processor *proc)
+{
+    struct raid_io_context *io_context = proc->private_writer;
+    size_t n_extents;
+    size_t to_write;
+
+    ENTRY;
+
+    to_write = proc->reader_offset - proc->writer_offset;
+    n_extents = io_context->rebuild.current_split_missing_count;
+
+    return common_write_from_buff(proc, to_write, n_extents);
 }
 
 static int raid1_get_reader_chunk_size(struct pho_data_processor *enc,
@@ -236,15 +266,16 @@ static int raid1_extra_attrs(struct pho_data_processor *proc)
 {
     struct raid_io_context *io_context =
         &((struct raid_io_context *)proc->private_writer)[proc->current_target];
-    size_t repl_count = io_context->n_data_extents +
-        io_context->n_parity_extents;
+    size_t repl_count = n_total_extents(io_context);
     struct pho_io_descr *iods = io_context->iods;
     struct output_io_context *output;
+    size_t n_extents;
     size_t i;
 
     output = raid_output_io_context(io_context, proc->type);
+    n_extents = get_n_extents(io_context, proc->type);
 
-    for (i = 0; i < repl_count; ++i) {
+    for (i = 0; i < n_extents; ++i) {
         struct extent *extent = &output->extents[i];
         int rc;
 
@@ -273,10 +304,16 @@ static const struct pho_proc_ops RAID1_ERASER_PROCESSOR_OPS = {
     .destroy    = raid_eraser_processor_destroy,
 };
 
+static const struct pho_proc_ops RAID1_REBUILDER_PROCESSOR_OPS = {
+    .step       = raid_rebuilder_processor_step,
+    .destroy    = raid_writer_rebuilder_processor_destroy,
+};
+
 static const struct raid_ops RAID1_OPS = {
     .get_reader_chunk_size = raid1_get_reader_chunk_size,
     .read_into_buff = raid1_read_into_buff,
     .write_from_buff = raid1_write_from_buff,
+    .rebuild_from_buff = raid1_rebuild_from_buff,
     .set_extra_attrs = raid1_extra_attrs,
 };
 
@@ -469,6 +506,79 @@ static int layout_raid1_erase(struct pho_data_processor *eraser)
     return rc;
 }
 
+static size_t raid_get_nb_split(struct pho_data_processor *rebuilder)
+{
+    struct raid_io_context *io_context = rebuilder->private_reader;
+    struct layout_info *layout = rebuilder->src_layout;
+    size_t nb_extent_per_split;
+    size_t last_lyt_index;
+
+    nb_extent_per_split = n_total_extents(io_context);
+    last_lyt_index = layout->extents[layout->ext_count - 1].layout_idx;
+
+    return (last_lyt_index / nb_extent_per_split) + 1;
+}
+
+static int raid_get_nb_extent_to_rebuild(struct pho_data_processor *rebuilder)
+{
+    struct raid_io_context *io_context = rebuilder->private_reader;
+    struct layout_info *layout = rebuilder->src_layout;
+    int nb_split = raid_get_nb_split(rebuilder);
+    int nb_extent_per_split;
+
+    nb_extent_per_split = n_total_extents(io_context);
+
+    return (nb_split * nb_extent_per_split) - layout->ext_count;
+}
+
+static int layout_raid1_rebuild(struct pho_data_processor *rebuilder)
+{
+    struct raid_io_context *io_context;
+    unsigned int repl_count;
+    int rc;
+
+    rc = raid1_repl_count(rebuilder->src_layout, &repl_count);
+    if (rc)
+        return rc;
+
+    io_context = xcalloc(1, sizeof(*io_context));
+    rebuilder->private_writer = io_context;
+    io_context->name = PLUGIN_NAME;
+    io_context->n_data_extents = 1;
+    io_context->n_parity_extents = repl_count - 1;
+    io_context->rebuild.missing_extents_remaining =
+        raid_get_nb_extent_to_rebuild(rebuilder);
+
+    /* Here, we allocate the maximum possible number of hashes to avoid having
+     * to reallocate between each split with a different number of extents to
+     * reconstruct.
+     */
+    io_context->nb_hashes = repl_count;
+    io_context->hashes = xcalloc(io_context->nb_hashes,
+                                 sizeof(*io_context->hashes));
+    for (int i = 0; i < io_context->nb_hashes; i++) {
+        rc = extent_hash_init(&io_context->hashes[i],
+                              PHO_CFG_GET_BOOL(cfg_lyt_raid1,
+                                               PHO_CFG_LYT_RAID1,
+                                               extent_md5, false),
+                              PHO_CFG_GET_BOOL(cfg_lyt_raid1,
+                                               PHO_CFG_LYT_RAID1,
+                                               extent_xxh128, false));
+        if (rc)
+            goto out_hash;
+    }
+
+    return raid_rebuilder_init(rebuilder, &RAID1_MODULE_DESC,
+                               &RAID1_REBUILDER_PROCESSOR_OPS,
+                               &RAID1_OPS);
+
+out_hash:
+    for (int i = 0; i < io_context->nb_hashes; i++)
+        extent_hash_fini(&io_context->hashes[i]);
+
+    return rc;
+}
+
 int layout_raid1_locate(struct dss_handle *dss, struct layout_info *layout,
                         const char *focus_host, char **hostname,
                         int *nb_new_locks)
@@ -581,6 +691,7 @@ static const struct pho_layout_module_ops LAYOUT_RAID1_OPS = {
     .encode = layout_raid1_encode,
     .decode = layout_raid1_decode,
     .erase = layout_raid1_erase,
+    .rebuild = layout_raid1_rebuild,
     .locate = layout_raid1_locate,
     .get_specific_attrs = layout_raid1_get_specific_attrs,
     .get_availability = layout_raid1_get_availability,
