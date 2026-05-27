@@ -623,6 +623,8 @@ int phobos_rename(const char *old_oid, const char *uuid, char *new_oid);
 int phobos_copy(struct pho_xfer_desc *xfers, size_t n,
                 pho_completion_cb_t cb, void *udata);
 
+int phobos_copy_rebuild(struct pho_xfer_desc *xfers, size_t num_xfers);
+
 /**
  * Clean a pho_xfer_desc structure by freeing the uuid and attributes, and
  * the tags in case the xfer corresponds to a PUT operation.

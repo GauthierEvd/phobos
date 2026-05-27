@@ -163,6 +163,7 @@ static const char *get_xfer_param_reference_copy_name(
 {
     switch (xfer->xd_op) {
     case PHO_XFER_OP_COPY:
+    case PHO_XFER_OP_REBUILD:
         return xfer->xd_params.copy.get.copy_name;
     case PHO_XFER_OP_GET:
         return xfer->xd_params.get.copy_name;
@@ -175,9 +176,50 @@ static const char *get_xfer_param_reference_copy_name(
     }
 }
 
+static int fill_rebuild_put_params_from_layout(struct dss_handle *dss,
+                                               struct pho_xfer_desc *xfer,
+                                               struct layout_info *layout)
+{
+    struct pho_xfer_put_params *put_params = &xfer->xd_params.copy.put;
+    struct string_array common_tags = NO_STRING;
+    enum rsc_family family;
+    const char *library;
+    int rc = 0;
+    int i;
+
+    family = layout->extents[0].media.family;
+    library = layout->extents[0].media.library;
+
+    for (i = 0; i < layout->ext_count; i++) {
+        struct extent *extent = &layout->extents[i];
+        struct media_info *medium;
+
+        rc = dss_one_medium_get_from_id(dss, &extent->media, &medium);
+        if (rc) {
+            string_array_free(&common_tags);
+            LOG_RETURN(rc,
+                       "Cannot retrieve medium "FMT_PHO_ID" from rebuild "
+                       "source layout", PHO_ID(extent->media));
+        }
+
+        if (i == 0)
+            string_array_dup(&common_tags, &medium->tags);
+        else
+            string_array_intersect(&medium->tags, &common_tags);
+
+        dss_res_free(medium, 1);
+    }
+
+    put_params->family = family;
+    put_params->library = library;
+    put_params->tags = common_tags;
+
+    return rc;
+}
+
 /**
  * Build a decoder for this xfer by retrieving the xfer layout and initializing
- * the decoder from it. Only valid for GET / COPY / ERASE xfers.
+ * the decoder from it. Only valid for GET / COPY / ERASE / REBUILD xfers.
  *
  * @param[in]   dss     A DSS handle to retrieve layout information for xfer
  * @param[in]   xfer    The xfer to be decoded
@@ -196,7 +238,8 @@ static int decoder_build(struct dss_handle *dss, struct pho_xfer_desc *xfer,
     int rc;
 
     assert(xfer->xd_op == PHO_XFER_OP_GET || xfer->xd_op == PHO_XFER_OP_DEL ||
-           xfer->xd_op == PHO_XFER_OP_COPY);
+           xfer->xd_op == PHO_XFER_OP_COPY ||
+           xfer->xd_op == PHO_XFER_OP_REBUILD);
 
     rc = dss_filter_build(&filter,
                           "{\"$AND\": ["
@@ -230,15 +273,26 @@ static int decoder_build(struct dss_handle *dss, struct pho_xfer_desc *xfer,
     }
 
     /* @FIXME: duplicate layout to avoid calling dss functions to free this? */
-    if (xfer->xd_op == PHO_XFER_OP_GET)
+    switch (xfer->xd_op) {
+    case PHO_XFER_OP_GET:
         rc = layout_decoder(decoder, xfer, layout);
-    else if (xfer->xd_op == PHO_XFER_OP_COPY)
+        break;
+    case PHO_XFER_OP_COPY:
         rc = layout_copier(decoder, xfer, layout);
-    else
+        break;
+    case PHO_XFER_OP_DEL:
         rc = layout_eraser(decoder, xfer, layout);
+        break;
+    case PHO_XFER_OP_REBUILD:
+        rc = fill_rebuild_put_params_from_layout(dss, xfer, layout);
+        if (rc)
+            GOTO(err, rc);
 
-    if (rc)
-        GOTO(err, rc);
+        rc = layout_rebuilder(decoder, xfer, layout);
+        break;
+    default:
+        break;
+    }
 
 err:
     if (rc)
@@ -268,7 +322,8 @@ static int send_generated_requests(struct pho_data_processor *proc,
         if (pho_request_is_write(req)) {
             struct pho_xfer_put_params *put_params;
 
-            if (proc->xfer->xd_op == PHO_XFER_OP_COPY)
+            if (proc->xfer->xd_op == PHO_XFER_OP_COPY ||
+                proc->xfer->xd_op == PHO_XFER_OP_REBUILD)
                 put_params = &proc->xfer->xd_params.copy.put;
             else
                 put_params = &proc->xfer->xd_params.put;
@@ -984,7 +1039,8 @@ static int get_copy(struct dss_handle *dss, struct pho_xfer_desc *xfer,
 {
     int rc;
 
-    if (xfer->xd_op == PHO_XFER_OP_COPY || xfer->xd_op == PHO_XFER_OP_GET) {
+    if (xfer->xd_op == PHO_XFER_OP_COPY || xfer->xd_op == PHO_XFER_OP_GET ||
+        xfer->xd_op == PHO_XFER_OP_REBUILD) {
         rc = dss_lazy_find_copy(dss, obj->uuid, obj->version,
                                 get_xfer_param_reference_copy_name(xfer), copy);
         if (rc)
@@ -998,6 +1054,22 @@ static int get_copy(struct dss_handle *dss, struct pho_xfer_desc *xfer,
     }
 
     return 0;
+}
+
+static enum processor_type op2proc_type(enum pho_xfer_op op)
+{
+    switch (op) {
+    case PHO_XFER_OP_DEL:
+        return PHO_PROC_ERASER;
+    case PHO_XFER_OP_COPY:
+        return PHO_PROC_COPIER;
+    case PHO_XFER_OP_REBUILD:
+        return PHO_PROC_REBUILDER;
+    case PHO_XFER_OP_GET:
+        return PHO_PROC_DECODER;
+    default:
+        __builtin_unreachable();
+    }
 }
 
 /**
@@ -1018,7 +1090,7 @@ static int init_enc_or_dec(struct pho_data_processor *proc,
     /* can't get md for undel without any objid */
     /* TODO: really necessary to create decoder for getmd, del and undel OP ? */
     if (xfer->xd_op != PHO_XFER_OP_UNDEL && xfer->xd_op != PHO_XFER_OP_GET &&
-        xfer->xd_op != PHO_XFER_OP_COPY &&
+        xfer->xd_op != PHO_XFER_OP_COPY && xfer->xd_op != PHO_XFER_OP_REBUILD &&
         (xfer->xd_op != PHO_XFER_OP_DEL &&
          !(xfer->xd_flags & PHO_XFER_OBJ_HARD_DEL))) {
         rc = object_md_get(dss, xfer->xd_targets);
@@ -1042,15 +1114,14 @@ static int init_enc_or_dec(struct pho_data_processor *proc,
     if (!xfer->xd_targets->xt_objid && !xfer->xd_targets->xt_objuuid)
         LOG_RETURN(rc = -EINVAL, "uuid or oid must be provided");
 
+    proc->type = op2proc_type(xfer->xd_op);
+
     if (xfer->xd_op == PHO_XFER_OP_GET) {
-        proc->type = PHO_PROC_DECODER;
         /* Keep dss_lazy_find with the get to keep the same behavior */
         rc = dss_lazy_find_object(dss, xfer->xd_targets->xt_objid,
                                   xfer->xd_targets->xt_objuuid,
                                   xfer->xd_targets->xt_version, &obj);
     } else {
-        proc->type = (xfer->xd_op == PHO_XFER_OP_DEL ? PHO_PROC_ERASER :
-                                                       PHO_PROC_COPIER);
         rc = dss_find_object(dss, xfer->xd_targets->xt_objid,
                              xfer->xd_targets->xt_objuuid,
                              xfer->xd_targets->xt_version,
@@ -1071,12 +1142,18 @@ static int init_enc_or_dec(struct pho_data_processor *proc,
      */
     proc->object_size = obj->size;
 
-    if (proc->type == PHO_PROC_COPIER) {
+    if (xfer->xd_op == PHO_XFER_OP_COPY || xfer->xd_op == PHO_XFER_OP_REBUILD) {
         /* input user do not preset the target size when creating a copy */
         xfer->xd_targets->xt_size = obj->size;
         /* use existing grouping as default for copy */
         /* put grouping attribute must not be preset for a copy operation */
         xfer->xd_params.copy.put.grouping = xstrdup_safe(obj->grouping);
+    }
+
+    if (xfer->xd_op == PHO_XFER_OP_REBUILD) {
+        rc = pho_json_to_attrs(&xfer->xd_targets->xt_attrs, obj->user_md);
+        if (rc)
+            return rc;
     }
 
     rc = get_copy(dss, xfer, obj, &copy);
@@ -1327,7 +1404,7 @@ static void store_end_xfer(struct phobos_handle *pho, size_t xfer_idx, int rc)
         goto cont;
 
     /* Once the encoder is done and successful, save the layout and metadata */
-    if (is_encoder(proc) || is_copier(proc))
+    if (is_encoder(proc) || is_copier(proc) || is_rebuilder(proc))
         rc = store_end_encoder_xfer(pho, xfer, proc);
     else if (xfer->xd_op == PHO_XFER_OP_GET)
         rc = store_end_decoder_xfer(pho, xfer, proc);
@@ -1405,7 +1482,8 @@ static void store_fini(struct phobos_handle *pho, int rc)
         if (pho->processors) {
             if (is_decoder(&pho->processors[i]) ||
                 is_eraser(&pho->processors[i]) ||
-                is_copier(&pho->processors[i])) {
+                is_copier(&pho->processors[i]) ||
+                is_rebuilder(&pho->processors[i])) {
                 dss_res_free(pho->processors[i].src_layout, 1);
                 pho->processors[i].src_layout = NULL;
             }
@@ -1768,11 +1846,27 @@ static int phobos_xfer(struct pho_xfer_desc *xfers, size_t n,
     return rc;
 }
 
+static void phobos_prepare_xfer(struct pho_xfer_desc *xfers, size_t n,
+                                enum pho_xfer_op op, bool duplicate_uuid)
+{
+    size_t i, j;
+
+    for (i = 0; i < n; i++) {
+        xfers[i].xd_op = op;
+        xfers[i].xd_rc = 0;
+        for (j = 0; j < xfers[i].xd_ntargets; j++)
+            xfers[i].xd_targets[j].xt_rc = 0;
+
+        if (duplicate_uuid && xfers[i].xd_targets->xt_objuuid)
+            xfers[i].xd_targets->xt_objuuid =
+                xstrdup(xfers[i].xd_targets->xt_objuuid);
+    }
+}
+
 int phobos_put(struct pho_xfer_desc *xfers, size_t n,
                pho_completion_cb_t cb, void *udata)
 {
     size_t i;
-    size_t j;
     int rc;
 
     /* Ensure conf is loaded, to retrieve default values */
@@ -1780,12 +1874,9 @@ int phobos_put(struct pho_xfer_desc *xfers, size_t n,
     if (rc && rc != -EALREADY)
         return rc;
 
-    for (i = 0; i < n; i++) {
-        xfers[i].xd_op = PHO_XFER_OP_PUT;
-        xfers[i].xd_rc = 0;
-        for (j = 0; j < xfers[i].xd_ntargets; j++)
-            xfers[i].xd_targets[j].xt_rc = 0;
+    phobos_prepare_xfer(xfers, n, PHO_XFER_OP_PUT, false);
 
+    for (i = 0; i < n; i++) {
         rc = fill_put_params(&xfers[i]);
         if (rc)
             return rc;
@@ -1805,25 +1896,9 @@ int phobos_get(struct pho_xfer_desc *xfers, size_t n,
     int rc = 0;
     size_t i;
 
-    for (i = 0; i < n; i++) {
-        xfers[i].xd_op = PHO_XFER_OP_GET;
-        xfers[i].xd_rc = 0;
-        for (j = 0; j < xfers[i].xd_ntargets; j++)
-            xfers[i].xd_targets[j].xt_rc = 0;
-        /* If the uuid is given by the user, we don't own that memory.
-         * The simplest solution is to duplicate it here so that it can
-         * be freed at the end by pho_xfer_desc_clean().
-         *
-         * The user of this function must free any allocated string passed to
-         * the xfer.
-         *
-         * For the Python CLI, the garbage collector will take care of
-         * this pointer.
-         */
-        if (xfers[i].xd_targets->xt_objuuid)
-            xfers[i].xd_targets->xt_objuuid =
-                xstrdup(xfers[i].xd_targets->xt_objuuid);
+    phobos_prepare_xfer(xfers, n, PHO_XFER_OP_GET, true);
 
+    for (i = 0; i < n; i++) {
         if (xfers[i].xd_flags & PHO_XFER_OBJ_BEST_HOST) {
             int nb_new_lock;
 
@@ -1894,28 +1969,7 @@ int phobos_get(struct pho_xfer_desc *xfers, size_t n,
 int phobos_getmd(struct pho_xfer_desc *xfers, size_t n,
                  pho_completion_cb_t cb, void *udata)
 {
-    size_t j;
-    size_t i;
-
-    for (i = 0; i < n; i++) {
-        xfers[i].xd_op = PHO_XFER_OP_GETMD;
-        xfers[i].xd_rc = 0;
-        for (j = 0; j < xfers[i].xd_ntargets; j++)
-            xfers[i].xd_targets[j].xt_rc = 0;
-        /* If the uuid is given by the user, we don't own that memory.
-         * The simplest solution is to duplicate it here so that it can
-         * be freed at the end by pho_xfer_desc_clean().
-         *
-         * The user of this function must free any allocated string passed to
-         * the xfer.
-         *
-         * For the Python CLI, the garbage collector will take care of
-         * this pointer.
-         */
-        if (xfers[i].xd_targets->xt_objuuid)
-            xfers[i].xd_targets->xt_objuuid =
-                xstrdup(xfers[i].xd_targets->xt_objuuid);
-    }
+    phobos_prepare_xfer(xfers, n, PHO_XFER_OP_GETMD, true);
 
     return phobos_xfer(xfers, n, cb, udata);
 }
@@ -2031,28 +2085,7 @@ CLEAN:
 
 int phobos_delete(struct pho_xfer_desc *xfers, size_t num_xfers)
 {
-    size_t j;
-    size_t i;
-
-    for (i = 0; i < num_xfers; i++) {
-        xfers[i].xd_op = PHO_XFER_OP_DEL;
-        xfers[i].xd_rc = 0;
-        for (j = 0; j < xfers[i].xd_ntargets; j++)
-            xfers[i].xd_targets[j].xt_rc = 0;
-        /* If the uuid is given by the user, we don't own that memory.
-         * The simplest solution is to duplicate it here so that it can
-         * be freed at the end by pho_xfer_desc_clean().
-         *
-         * The user of this function must free any allocated string passed to
-         * the xfer.
-         *
-         * For the Python CLI, the garbage collector will take care of
-         * this pointer.
-         */
-        if (xfers[i].xd_targets->xt_objuuid)
-            xfers[i].xd_targets->xt_objuuid =
-                xstrdup(xfers[i].xd_targets->xt_objuuid);
-    }
+    phobos_prepare_xfer(xfers, num_xfers, PHO_XFER_OP_DEL, true);
 
     return phobos_xfer(xfers, num_xfers, NULL, NULL);
 }
@@ -2402,28 +2435,14 @@ clean_dss:
 
 int phobos_undelete(struct pho_xfer_desc *xfers, size_t num_xfers)
 {
-    size_t i;
-    size_t j;
+    phobos_prepare_xfer(xfers, num_xfers, PHO_XFER_OP_UNDEL, true);
 
-    for (i = 0; i < num_xfers; i++) {
-        xfers[i].xd_op = PHO_XFER_OP_UNDEL;
-        xfers[i].xd_rc = 0;
-        for (j = 0; j < xfers[i].xd_ntargets; j++)
-            xfers[i].xd_targets[j].xt_rc = 0;
-        /* If the uuid is given by the user, we don't own that memory.
-         * The simplest solution is to duplicate it here so that it can
-         * be freed at the end by pho_xfer_desc_clean().
-         *
-         * The user of this function must free any allocated string passed to
-         * the xfer.
-         *
-         * For the Python CLI, the garbage collector will take care of
-         * this pointer.
-         */
-        if (xfers[i].xd_targets->xt_objuuid)
-            xfers[i].xd_targets->xt_objuuid =
-                xstrdup(xfers[i].xd_targets->xt_objuuid);
-    }
+    return phobos_xfer(xfers, num_xfers, NULL, NULL);
+}
+
+int phobos_copy_rebuild(struct pho_xfer_desc *xfers, size_t num_xfers)
+{
+    phobos_prepare_xfer(xfers, num_xfers, PHO_XFER_OP_REBUILD, true);
 
     return phobos_xfer(xfers, num_xfers, NULL, NULL);
 }
@@ -2515,13 +2534,14 @@ static void xfer_copy_param_clean(struct pho_xfer_desc *xfer)
 }
 
 static void (*xfer_param_cleaner[PHO_XFER_OP_LAST])(struct pho_xfer_desc *) = {
-    [PHO_XFER_OP_PUT]   = xfer_put_param_clean,
-    [PHO_XFER_OP_GET]   = NULL,
-    [PHO_XFER_OP_GETMD] = NULL,
-    [PHO_XFER_OP_SETMD] = NULL,
-    [PHO_XFER_OP_DEL]   = NULL,
-    [PHO_XFER_OP_UNDEL] = NULL,
-    [PHO_XFER_OP_COPY]  = xfer_copy_param_clean,
+    [PHO_XFER_OP_PUT]     = xfer_put_param_clean,
+    [PHO_XFER_OP_GET]     = NULL,
+    [PHO_XFER_OP_GETMD]   = NULL,
+    [PHO_XFER_OP_SETMD]   = NULL,
+    [PHO_XFER_OP_DEL]     = NULL,
+    [PHO_XFER_OP_UNDEL]   = NULL,
+    [PHO_XFER_OP_COPY]    = xfer_copy_param_clean,
+    [PHO_XFER_OP_REBUILD] = xfer_copy_param_clean,
 };
 
 void pho_xfer_desc_clean(struct pho_xfer_desc *xfer)
@@ -2626,13 +2646,14 @@ int phobos_copy(struct pho_xfer_desc *xfers, size_t n,
                 pho_completion_cb_t cb, void *udata)
 {
     size_t i;
-    size_t j;
     int rc;
 
     /* Ensure conf is loaded, to retrieve default values */
     rc = pho_cfg_init_local(NULL);
     if (rc && rc != -EALREADY)
         return rc;
+
+    phobos_prepare_xfer(xfers, n, PHO_XFER_OP_COPY, true);
 
     for (i = 0; i < n; i++) {
         if (xfers[i].xd_params.copy.put.grouping) {
@@ -2643,24 +2664,6 @@ int phobos_copy(struct pho_xfer_desc *xfers, size_t n,
                       xfers[i].xd_params.copy.put.grouping);
             return rc;
         }
-
-        xfers[i].xd_op = PHO_XFER_OP_COPY;
-        xfers[i].xd_rc = 0;
-        for (j = 0; j < xfers[i].xd_ntargets; j++)
-            xfers[i].xd_targets[j].xt_rc = 0;
-        /* If the uuid is given by the user, we don't own that memory.
-         * The simplest solution is to duplicate it here so that it can
-         * be freed at the end by pho_xfer_desc_clean().
-         *
-         * The user of this function must free any allocated string passed to
-         * the xfer.
-         *
-         * For the Python CLI, the garbage collector will take care of
-         * this pointer.
-         */
-        if (xfers[i].xd_targets->xt_objuuid)
-            xfers[i].xd_targets->xt_objuuid =
-                xstrdup(xfers[i].xd_targets->xt_objuuid);
 
         rc = fill_put_params(&xfers[i]);
         if (rc)

@@ -149,6 +149,16 @@ bool string_exists(const struct string_array *string_array, const char *string);
 void str2string_array(const char *str, struct string_array *string_array);
 
 /**
+ * Compute the intersection between two string array
+ *
+ * @param[in]       src             first array of string
+ * @param[in,out]   dst             second array of string, will be replace
+ *                                  by the intersection
+ */
+void string_array_intersect(const struct string_array *src,
+                            struct string_array *dst);
+
+/**
  * Convert a string of the form "YYYY-mm-dd HH:MM:SS.uuuuuu" into a
  * timeval structure
  *

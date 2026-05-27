@@ -399,6 +399,20 @@ void str2string_array(const char *str, struct string_array *string_array)
     free(parse_str);
 }
 
+void string_array_intersect(const struct string_array *src,
+                            struct string_array *dst)
+{
+    struct string_array intersection = NO_STRING;
+    size_t i;
+
+    for (i = 0; i < dst->count; i++)
+        if (string_exists(src, dst->strings[i]))
+            string_array_add(&intersection, dst->strings[i]);
+
+    string_array_free(dst);
+    *dst = intersection;
+}
+
 static int any_str2timeval(const char *format, const char *tv_str,
                            struct timeval *tv)
 {
