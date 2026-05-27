@@ -1072,6 +1072,34 @@ static enum processor_type op2proc_type(enum pho_xfer_op op)
     }
 }
 
+static int check_rebuild_copy_status(struct pho_data_processor *proc,
+                                     const struct pho_xfer_desc *xfer,
+                                     const struct object_info *obj,
+                                     const struct copy_info *copy)
+{
+    if (xfer->xd_op != PHO_XFER_OP_REBUILD)
+        return 0;
+
+    switch (copy->copy_status) {
+    case PHO_COPY_STATUS_READABLE:
+        return 0;
+    case PHO_COPY_STATUS_INCOMPLETE:
+        pho_error(-EINVAL,
+                  "Status of copy '%s' for the object '%s' is incomplete, "
+                  "cannot be rebuilt",
+                  copy->copy_name, obj->oid);
+        return -EINVAL;
+    case PHO_COPY_STATUS_COMPLETE:
+        proc->done = true;
+        pho_info("Status of copy '%s' for the object '%s' is complete, "
+                 "nothing to rebuild",
+                 copy->copy_name, obj->oid);
+        return 0;
+    default:
+        return -EINVAL;
+    }
+}
+
 /**
  * Initialize a data processor to perform \a xfer, according to xfer->xd_op and
  * xfer->xd_flags.
@@ -1153,12 +1181,19 @@ static int init_enc_or_dec(struct pho_data_processor *proc,
     if (xfer->xd_op == PHO_XFER_OP_REBUILD) {
         rc = pho_json_to_attrs(&xfer->xd_targets->xt_attrs, obj->user_md);
         if (rc)
-            return rc;
+            goto end;
     }
 
     rc = get_copy(dss, xfer, obj, &copy);
     if (rc)
-        return rc;
+        goto end;
+
+    rc = check_rebuild_copy_status(proc, xfer, obj, copy);
+    if (rc || proc->done) {
+        proc->type = PHO_PROC_REBUILDER;
+        xfer->xd_targets->xt_rc = rc;
+        goto end;
+    }
 
     if (copy->copy_status == PHO_COPY_STATUS_INCOMPLETE &&
         !(xfer->xd_op == PHO_XFER_OP_DEL &&
@@ -1166,8 +1201,7 @@ static int init_enc_or_dec(struct pho_data_processor *proc,
         pho_error(rc = -EINVAL,
                   "Status of copy '%s' for the object '%s' is incomplete, "
                   "cannot be read", copy->copy_name, obj->oid);
-        copy_info_free(copy);
-        return rc;
+        goto end;
     }
 
     if (copy->copy_status != PHO_COPY_STATUS_COMPLETE)
@@ -1176,13 +1210,13 @@ static int init_enc_or_dec(struct pho_data_processor *proc,
 
     proc->src_copy_ctime = copy->creation_time;
     rc = copy_object_info_into_xfer(obj, xfer->xd_targets);
-    object_info_free(obj);
     if (rc)
         goto end;
 
     rc = decoder_build(dss, xfer, copy, proc);
 
 end:
+    object_info_free(obj);
     copy_info_free(copy);
     return rc;
 }
@@ -1404,7 +1438,8 @@ static void store_end_xfer(struct phobos_handle *pho, size_t xfer_idx, int rc)
         goto cont;
 
     /* Once the encoder is done and successful, save the layout and metadata */
-    if (is_encoder(proc) || is_copier(proc) || is_rebuilder(proc))
+    if (proc->dest_layout &&
+        (is_encoder(proc) || is_copier(proc) || is_rebuilder(proc)))
         rc = store_end_encoder_xfer(pho, xfer, proc);
     else if (xfer->xd_op == PHO_XFER_OP_GET)
         rc = store_end_decoder_xfer(pho, xfer, proc);
