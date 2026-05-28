@@ -193,7 +193,7 @@ struct pho_xfer_get_params {
  * Check the description of `phobos_delete`.
  */
 struct pho_xfer_del_params {
-    char *copy_name;           /**< [in] Name of the copy to hard delete when
+    const char *copy_name;     /**< [in] Name of the copy to hard delete when
                                  *  the flag PHO_XFER_COPY_HARD_DEL is used.
                                  */
     enum dss_obj_scope scope;  /**< [in] Object visibility scope to delete
