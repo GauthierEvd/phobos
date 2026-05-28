@@ -375,15 +375,12 @@ int phobos_get(struct pho_xfer_desc *xfers, size_t n,
  *
  * \param[in,out]  xfers  List of Xfer descriptors
  * \param[in]      n      Number of Xfer descriptors
- * \param[in]      cb     Optional completion callback per Xfer
- * \param[in]      udata  User data passed to cb
-
+ *
  * @return                0 on success or -errno on failure.
  *
  * This must be called after phobos_init.
  */
-int phobos_getmd(struct pho_xfer_desc *xfers, size_t n,
-                 pho_completion_cb_t cb, void *udata);
+int phobos_getmd(struct pho_xfer_desc *xfers, size_t n);
 
 /**
  * Set (replace) the metadata from the object store

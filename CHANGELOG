@@ -6,6 +6,10 @@
    and the related objects
  * WARNING: When calling the pho_xfer_desc_clean function  after a `phobos_get`
    call will now free the node_name parameter.
+ * WARNING: phobos_getmd function signature changes. Removal of the xfer
+   completion callback and user-profile data parameter.
+ * WARNING: phobos_getmd now only populates the version and the attributes (User
+   defined metadata) fields. objid and uuid fields are no longer populated.
  * Adding a list of media to avoid to use is added to the write allocation of
    the copy and rebuild operation. For copy, this means the destination copy
    will necessarily be written on media different from the source copy. For

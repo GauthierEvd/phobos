@@ -514,8 +514,8 @@ static int processor_communicate(struct pho_data_processor *proc,
 }
 
 /**
- * Retrieve metadata associated with this xfer oid from the DSS and update the
- * \a xfer xd_attrs field accordingly.
+ * Retrieve metadata associated with this xfer oid or uuid from the DSS and
+ * update the \a xfer xd_attrs field accordingly.
  */
 int object_md_get(struct dss_handle *dss, struct pho_xfer_target *xfer)
 {
@@ -537,11 +537,6 @@ int object_md_get(struct dss_handle *dss, struct pho_xfer_target *xfer)
     if (rc)
         LOG_GOTO(DSS_FREE, rc, "Cannot convert attributes of object: '%s'", id);
 
-    if (!xfer->xt_objid)
-        xfer->xt_objid = xstrdup(obj->oid);
-
-    free(xfer->xt_objuuid);
-    xfer->xt_objuuid = xstrdup(obj->uuid);
     xfer->xt_version = obj->version;
 
 DSS_FREE:
@@ -967,7 +962,7 @@ static int copy_object_info_into_xfer(struct object_info *obj,
 
 static bool op_is_basic_decoder(struct pho_xfer_desc *xfer)
 {
-    if (xfer->xd_op == PHO_XFER_OP_GETMD || xfer->xd_op == PHO_XFER_OP_UNDEL)
+    if (xfer->xd_op == PHO_XFER_OP_UNDEL)
         return true;
 
     if (xfer->xd_op == PHO_XFER_OP_DEL &&
@@ -1115,25 +1110,10 @@ static int init_enc_or_dec(struct pho_data_processor *proc,
         /* Handle encoder creation for PUT */
         return layout_encoder(proc, xfer);
 
-    /* can't get md for undel without any objid */
-    /* TODO: really necessary to create decoder for getmd, del and undel OP ? */
-    if (xfer->xd_op != PHO_XFER_OP_UNDEL && xfer->xd_op != PHO_XFER_OP_GET &&
-        xfer->xd_op != PHO_XFER_OP_COPY && xfer->xd_op != PHO_XFER_OP_REBUILD &&
-        (xfer->xd_op != PHO_XFER_OP_DEL &&
-         !(xfer->xd_flags & PHO_XFER_OBJ_HARD_DEL))) {
-        rc = object_md_get(dss, xfer->xd_targets);
-        if (rc)
-            LOG_RETURN(rc, "Cannot find metadata for objid:'%s'",
-                       xfer->xd_targets->xt_objid);
-    }
-
     if (op_is_basic_decoder(xfer)) {
         /* create dummy decoder if no I/O operations are made */
         proc->xfer = xfer;
         proc->type = PHO_PROC_DECODER;
-
-        if (xfer->xd_op == PHO_XFER_OP_GETMD)
-            proc->done = true;
 
         return 0;
     }
@@ -1853,8 +1833,8 @@ static int store_perform_xfers(struct phobos_handle *pho)
 }
 
 /**
- * Common function to handle PHO_XFER_OP_PUT, PHO_XFER_OP_GET,
- * PHO_XFER_OP_GETMD and PHO_XFER_OP_COPY transfers.
+ * Common function to handle PHO_XFER_OP_PUT, PHO_XFER_OP_GET
+ * and PHO_XFER_OP_COPY transfers.
  *
  * @param[in/out]   xfers   Transfers to be performed, they will be updated with
  *                          an appropriate xd_rc upon successful completion of
@@ -2001,12 +1981,55 @@ int phobos_get(struct pho_xfer_desc *xfers, size_t n,
     return rc;
 }
 
-int phobos_getmd(struct pho_xfer_desc *xfers, size_t n,
-                 pho_completion_cb_t cb, void *udata)
+int phobos_getmd(struct pho_xfer_desc *xfers, size_t n)
 {
-    phobos_prepare_xfer(xfers, n, PHO_XFER_OP_GETMD, true);
+    struct dss_handle dss;
+    size_t j;
+    size_t i;
+    int rc;
 
-    return phobos_xfer(xfers, n, cb, udata);
+    /* Ensure conf is loaded */
+    rc = pho_cfg_init_local(NULL);
+    if (rc && rc != -EALREADY)
+        LOG_RETURN(rc, "Cannot init access to local config parameters");
+
+    /* Connect to the DSS */
+    rc = dss_init(&dss);
+    if (rc)
+        LOG_RETURN(rc, "Cannot initialize a connection handle");
+
+
+    for (i = 0; i < n; i++) {
+        xfers[i].xd_op = PHO_XFER_OP_GETMD;
+        xfers[i].xd_rc = 0;
+        for (j = 0; j < xfers[i].xd_ntargets; j++)
+            xfers[i].xd_targets[j].xt_rc = 0;
+        /* If the uuid is given by the user, we don't own that memory.
+         * The simplest solution is to duplicate it here so that it can
+         * be freed at the end by pho_xfer_desc_clean().
+         *
+         * The user of this function must free any allocated string passed to
+         * the xfer.
+         *
+         * For the Python CLI, the garbage collector will take care of
+         * this pointer.
+         */
+        if (xfers[i].xd_targets->xt_objuuid)
+            xfers[i].xd_targets->xt_objuuid =
+                xstrdup(xfers[i].xd_targets->xt_objuuid);
+
+        rc = object_md_get(&dss, xfers[i].xd_targets);
+        if (rc) {
+            dss_fini(&dss);
+            LOG_RETURN(rc, "Cannot find metadata for object: %s",
+                       (xfers[i].xd_targets->xt_objid != NULL) ?
+                        xfers[i].xd_targets->xt_objid :
+                        xfers[i].xd_targets->xt_objuuid);
+        }
+    }
+
+    dss_fini(&dss);
+    return rc;
 }
 
 int phobos_setmd(struct pho_xfer_desc *xfers, size_t num_xfers)

@@ -284,7 +284,7 @@ out_free_mput:
         target_getmd.xt_objid = argv[2];
         xfer_getmd.xd_targets = &target_getmd;
 
-        rc = phobos_getmd(&xfer_getmd, 1, NULL, NULL);
+        rc = phobos_getmd(&xfer_getmd, 1);
 
         if (rc)
             pho_error(rc, "SETMD GETMD '%s' failed", argv[2]);

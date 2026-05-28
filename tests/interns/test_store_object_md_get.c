@@ -132,7 +132,10 @@ static void assert_xfer_in_state(const struct test_state *state,
     else
         assert_null(state->xfer.xd_targets->xt_objid);
 
-    assert_string_equal(state->xfer.xd_targets->xt_objuuid, obj->uuid);
+    if (state->xfer.xd_targets->xt_objuuid)
+        assert_string_equal(state->xfer.xd_targets->xt_objuuid, obj->uuid);
+    else
+        assert_null(state->xfer.xd_targets->xt_objuuid);
 
     assert_int_equal(state->xfer.xd_targets->xt_version, obj->version);
     assert_return_code(rc, -rc);

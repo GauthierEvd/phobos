@@ -36,7 +36,7 @@ from phobos.cli.common import (BaseResourceOptHandler, env_error_format,
                                XferOptHandler)
 from phobos.cli.common.utils import (attr_convert, create_put_params,
                                      get_scope, mput_file_line_parser)
-from phobos.core.store import attrs_as_dict, DelParams, UtilClient
+from phobos.core.store import DelParams, UtilClient
 
 
 class ObjectDeleteOptHandler(DeleteOptHandler):
@@ -99,7 +99,7 @@ class StoreDeleteOptHandler(BaseResourceOptHandler):
             sys.exit(abs(err.errno))
 
 
-class StoreGetMDOptHandler(XferOptHandler):
+class StoreGetMDOptHandler(BaseResourceOptHandler):
     """Retrieve object from backend."""
     label = 'getmd'
     descr = 'retrieve object metadata from backend'
@@ -109,40 +109,33 @@ class StoreGetMDOptHandler(XferOptHandler):
         """Add command options."""
         GetMDOptHandler(cls).add_options(parser)
 
-    @staticmethod
-    def _compl_notify(data, xfr, err_code): # pylint: disable=unused-argument
-        """Custom completion handler to display metadata."""
-        if err_code != 0:
-            return
-
-        res = []
-        itm = attrs_as_dict(xfr.contents.xd_targets[0].xt_attrs)
-        if not itm:
-            return
-
-        for key, value in sorted(itm.items()):
-            res.append(f'{key}={value}')
-
-        print(','.join(res))
-
     def exec_getmd(self):
         """Retrieve an object attributes from backend."""
+        client = UtilClient()
+
         oid = self.params.get('object_id')
         version = self.params.get('version')
         uuid = self.params.get('uuid')
 
         if not oid and not uuid:
-            self.logger.error("either 'object_id' or '--uuid' must be \
-                               provided")
+            self.logger.error("either 'object_id' or '--uuid' must be "
+                               "provided")
             sys.exit(os.EX_USAGE)
 
         self.logger.debug("Retrieving metadata for '%s'",
                           f'objid: {oid}' if oid else f'uuid:{uuid}')
-        self.client.getmd_register(oid, None, uuid, version)
 
         try:
-            self.client.run(compl_cb=self._compl_notify)
-        except IOError as err:
+            attrs = client.getmd(oid, uuid, version)
+            if not attrs:
+                return
+
+            res = []
+            for key, value in sorted(attrs.items()):
+                res.append(f'{key}={value}')
+
+            print(','.join(res))
+        except EnvironmentError as err:
             self.logger.error(env_error_format(err))
             sys.exit(abs(err.errno))
 

@@ -581,23 +581,15 @@ class XferClient: # pylint: disable=too-many-instance-attributes
         super().__init__(**kwargs)
         self.logger = logging.getLogger(__name__)
         self._store = Store()
-        self.getmd_session = []
         self.get_session = []
         self.put_session = []
         self.copy_session = []
-        self._getmd_cb = None
         self._get_cb = None
         self._put_cb = None
         self._copy_cb = None
 
     def noop_compl_cb(self, *args, **kwargs):
         """Default, empty transfer completion handler."""
-
-    def getmd_register(self, oid, data_path, uuid, version, attrs=None):
-        # pylint: disable=too-many-arguments
-        """Enqueue a GETMD transfer."""
-        self.getmd_session.append(([(oid, data_path, attrs)], 0,
-                                   (uuid, version), PHO_XFER_OP_GETMD))
 
     def get_register(self, oid, data_path, get_args, best_host, attrs=None):
         # pylint: disable=too-many-arguments
@@ -622,8 +614,6 @@ class XferClient: # pylint: disable=too-many-instance-attributes
 
     def clear(self):
         """Release resources associated to the current queues."""
-        self.getmd_session = []
-        self._getmd_cb = None
         self.get_session = []
         self._get_cb = None
         self.put_session = []
@@ -635,13 +625,6 @@ class XferClient: # pylint: disable=too-many-instance-attributes
         """Execute all registered transfer orders."""
         if compl_cb is None:
             compl_cb = self.noop_compl_cb
-
-        if self.getmd_session:
-            rc, _ = self._store.phobos_xfer(LIBPHOBOS.phobos_getmd,
-                                            self.getmd_session, compl_cb)
-            if rc:
-                full_oids = ", ".join(xfer_targets2str(self.getmd_session, 0))
-                raise IOError(rc, f"Cannot GETMD for objid(s) '{full_oids}'")
 
         if self.get_session:
             rc, node_name = self._store.phobos_xfer(LIBPHOBOS.phobos_get,
@@ -896,3 +879,31 @@ class UtilClient:
         if rc:
             raise EnvironmentError(rc, f"Failed to rebuild '{oid}''s copy "
                                    f"'{params.put.copy_name}'")
+
+    @staticmethod
+    def getmd(oid, uuid, version):
+        """Retrieve object metadata"""
+        n_xfers = c_int(1)
+        xfer_array_type = XferDescriptor * 1
+        xfers = xfer_array_type()
+
+        xfers[0].xd_ntargets = 1
+        target = XferTarget * 1
+        xfers[0].xd_targets = target()
+        if oid is not None:
+            xfers[0].xd_targets[0].xt_objid = oid
+        if uuid is not None:
+            xfers[0].xd_targets[0].xt_objuuid = uuid
+        if version is not None:
+            xfers[0].xd_targets[0].xt_version = version
+
+        try:
+            rc = LIBPHOBOS.phobos_getmd(xfers, n_xfers)
+
+            if rc:
+                raise EnvironmentError(rc,
+                                       f"Failed to get metadata for "
+                                       f"'{oid if oid is not None else uuid}'")
+            return attrs_as_dict(xfers[0].xd_targets[0].xt_attrs)
+        finally:
+            Store.xfer_desc_release(xfers)
