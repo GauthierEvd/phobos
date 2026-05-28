@@ -577,7 +577,7 @@ static void raid_io_context_set_extent_size(struct raid_io_context *io_context,
 }
 
 static void raid_io_context_setmd(struct raid_io_context *io_context,
-                                  char *xd_objid, const GString *str)
+                                  const GString *str)
 {
      struct pho_io_descr *iods = io_context->iods;
      int i;
@@ -1169,9 +1169,7 @@ static int raid_writer_split_setup(struct pho_data_processor *proc,
         iods[i].iod_flags = PHO_IO_REPLACE | PHO_IO_NO_REUSE;
     }
 
-    raid_io_context_setmd(io_context,
-                          proc->xfer->xd_targets[proc->current_target].xt_objid,
-                          io_context->write.user_md);
+    raid_io_context_setmd(io_context, io_context->write.user_md);
 
     extent_size = (proc->object_size - proc->writer_offset) /
                   io_context->n_data_extents;
