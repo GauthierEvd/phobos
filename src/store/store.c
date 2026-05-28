@@ -2161,7 +2161,7 @@ static void incomplete_copy_error(int rc,
 
 static int get_oid_from_incomplete_copy(struct dss_handle *dss,
                                         const struct copy_info *incomplete_copy,
-                                        char **xt_objid)
+                                        const char **xt_objid)
 {
     struct dss_filter object_uuid_version_filter;
     struct object_info *object_info;
@@ -2392,7 +2392,7 @@ static int delete_one_incomplete_copy(struct dss_handle *dss,
     free(copy_name);
 clean_layout:
     dss_res_free(layout, layout_count);
-    free(target.xt_objid);
+    free((void *)target.xt_objid);
     return rc;
 }
 
@@ -2510,7 +2510,7 @@ int phobos_copy_rebuild(struct pho_xfer_desc *xfers, size_t num_xfers)
     return phobos_xfer(xfers, num_xfers, NULL, NULL);
 }
 
-int phobos_rename(const char *old_oid, const char *uuid, char *new_oid)
+int phobos_rename(const char *old_oid, const char *uuid, const char *new_oid)
 {
     struct object_info *deprec_objects = NULL;
     struct object_info *objects = NULL;

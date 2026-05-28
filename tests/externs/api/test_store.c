@@ -51,7 +51,7 @@ static char *concat(char *path, char *suffix)
 
 static void cleanup(struct pho_xfer_desc *xfer, char *path)
 {
-    free(xfer->xd_targets->xt_objid);
+    free((void *)xfer->xd_targets->xt_objid);
     xfer_close_fd(xfer->xd_targets);
     pho_xfer_desc_clean(xfer);
 
@@ -197,7 +197,7 @@ int main(int argc, char **argv)
 out_free_mput:
         for (j--; j >= 0; j--) {
             xfer_close_fd(xfer[j].xd_targets);
-            free(xfer[j].xd_targets->xt_objid);
+            free((void *)xfer[j].xd_targets->xt_objid);
             free(xfer[j].xd_targets->xt_objuuid);
             free(xfer[j].xd_targets);
         }

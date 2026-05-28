@@ -195,7 +195,7 @@ static int release_copy(const struct object_info *obj,
         hsm_log_error(HSM_RELEASE, rc, obj, params);
 
     pho_xfer_desc_clean(&xfer);
-    free(target.xt_objid);
+    free((void *) target.xt_objid);
     free(target_uuid);
     free(copy_name);
     return rc;

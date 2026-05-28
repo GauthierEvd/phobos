@@ -651,7 +651,7 @@ int dss_object_delete(struct dss_handle *handle,
 int dss_object_rename(struct dss_handle *handle,
                       struct object_info *living_list, int living_count,
                       struct object_info *deprec_list, int deprec_count,
-                      char *new_oid);
+                      const char *new_oid);
 
 /**
  * Store information for one or many deprecated objects in DSS.

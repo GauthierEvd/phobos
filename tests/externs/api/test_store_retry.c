@@ -64,7 +64,7 @@ static char *setup_tmp_dir(void)
 static void reinit_xfer(struct pho_xfer_desc *xfer, const char *path,
                         const char *objpath, enum pho_xfer_op op)
 {
-    free(xfer->xd_targets->xt_objid);
+    free((void *)xfer->xd_targets->xt_objid);
     free(xfer->xd_targets->xt_objuuid);
     close(xfer->xd_targets->xt_fd);
 
@@ -208,6 +208,15 @@ static void test_put_retry(struct pho_xfer_desc *xfer, struct dev_info *dev,
     assert(pthread_join(wait_unlock_thread, NULL) == 0);
 }
 
+static void change_objid_first_char(struct pho_xfer_desc *xfer, char new_char)
+{
+    char *objid = xstrdup(xfer->xd_targets->xt_objid);
+
+    objid[0] = new_char;
+    free((void *)xfer->xd_targets->xt_objid);
+    xfer->xd_targets->xt_objid = objid;
+}
+
 int main(int argc, char **argv)
 {
     struct admin_handle     adm;
@@ -258,7 +267,7 @@ int main(int argc, char **argv)
 
         /* Put retry again to ensure no new error is raised */
         reinit_xfer(&xfer, argv[0], argv[0], PHO_XFER_OP_PUT);
-        xfer.xd_targets->xt_objid[0] = '0';
+        change_objid_first_char(&xfer, '0');
         test_put_retry(&xfer, &dev, &media);
     } else {
         /* Dir based tests */
@@ -281,12 +290,12 @@ int main(int argc, char **argv)
         /* Test put retry */
         reinit_xfer(&xfer, argv[0], argv[0], PHO_XFER_OP_PUT);
         /* Artificially build a new object ID */
-        xfer.xd_targets->xt_objid[0] = '0';
+        change_objid_first_char(&xfer, '0');
         test_put_retry(&xfer, &dev, &media);
     }
 
     free(dev.rsc.model);
-    free(xfer.xd_targets->xt_objid);
+    free((void *)xfer.xd_targets->xt_objid);
     free(xfer.xd_targets->xt_objuuid);
     xfer_close_fd(xfer.xd_targets);
     phobos_admin_fini(&adm);

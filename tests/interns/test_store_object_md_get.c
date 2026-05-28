@@ -146,7 +146,7 @@ static void update_state_xfer(struct test_state *state, char *oid, char *uuid,
 {
     state->xfer.xd_targets->xt_version = version;
 
-    free(state->xfer.xd_targets->xt_objid);
+    free((void *)state->xfer.xd_targets->xt_objid);
     state->xfer.xd_targets->xt_objid = oid ? xstrdup(oid) : NULL;
 
     free(state->xfer.xd_targets->xt_objuuid);
@@ -155,7 +155,7 @@ static void update_state_xfer(struct test_state *state, char *oid, char *uuid,
 
 static void clean_state_xfer(struct test_state *state)
 {
-    free(state->xfer.xd_targets->xt_objid);
+    free((void *)state->xfer.xd_targets->xt_objid);
     free(state->xfer.xd_targets->xt_objuuid);
     pho_attrs_free(&state->xfer.xd_targets->xt_attrs);
 

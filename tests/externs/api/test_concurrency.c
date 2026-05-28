@@ -266,7 +266,7 @@ int main(int argc, char **argv)
 
         pthread_join(threads[i].tid, (void **)&threadrc);
         pho_xfer_desc_clean(&threads[i].xfer);
-        free(threads[i].xfer.xd_targets->xt_objid);
+        free((void *)threads[i].xfer.xd_targets->xt_objid);
         free(threads[i].xfer.xd_targets);
 
         rc = rc ? : *threadrc;

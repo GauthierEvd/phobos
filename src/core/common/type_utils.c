@@ -206,7 +206,7 @@ void object_info_free(struct object_info *obj)
     if (!obj)
         return;
 
-    free(obj->oid);
+    free((void *)obj->oid);
     free(obj->uuid);
     free(obj->user_md);
     free((void *)obj->grouping);

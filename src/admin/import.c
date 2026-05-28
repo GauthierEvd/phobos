@@ -221,7 +221,7 @@ static int _get_objects_with_oid(struct dss_handle *dss,
                                  struct object_info **obj_get, int *obj_cnt,
                                  struct object_info **depr_get, int *depr_cnt)
 {
-    char *oid = obj_to_insert->oid;
+    const char *oid = obj_to_insert->oid;
     struct dss_filter filter;
     int rc = 0;
 
@@ -512,7 +512,7 @@ static int _import_file_to_dss(struct admin_handle *adm, int fd,
     struct io_adapter_module *ioa;
     struct pho_io_descr iod;
     struct pho_ext_loc loc;
-    char *save_oid;
+    const char *save_oid;
     int rc = 0;
 
     rc = get_io_adapter(PHO_FS_LTFS, &ioa);
@@ -578,7 +578,7 @@ static int _import_file_to_dss(struct admin_handle *adm, int fd,
         LOG_RETURN(rc, "Could not add extent to DSS");
 
     if (obj_to_insert.oid != save_oid) {
-        free(obj_to_insert.oid);
+        free((void *)obj_to_insert.oid);
         obj_to_insert.oid = save_oid;
         lyt_to_insert.oid = obj_to_insert.oid;
     }

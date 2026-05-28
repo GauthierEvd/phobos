@@ -253,7 +253,10 @@ struct pho_xfer_desc {
  * This structure carries all the information for one object.
  */
 struct pho_xfer_target {
-    char             *xt_objid;   /**< Object ID to GET/PUT/DEL/COPY. */
+    const char       *xt_objid;   /**< Object ID to PUT/GET/GETMD/SETMD/DEL/
+                                    *  UNDEL/COPY
+                                    *  Ownership: Caller
+                                    */
     char             *xt_objuuid; /**< Object UUID to GET/GETMD/SETMD/DEL/UNDEL/
                                     *  COPY
                                     *  Phobos duplicates this field internally
@@ -639,7 +642,7 @@ int phobos_locate(const char *obj_id, const char *uuid, int version,
  *
  * This must be called after phobos_init.
  */
-int phobos_rename(const char *old_oid, const char *uuid, char *new_oid);
+int phobos_rename(const char *old_oid, const char *uuid, const char *new_oid);
 
 /**
  * Copy N objects

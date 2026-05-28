@@ -109,7 +109,7 @@ struct module_desc {
  * Layout of an object.
  */
 struct layout_info {
-    char                *oid;           /**< Referenced object */
+    const char          *oid;           /**< Referenced object */
     char                *uuid;          /**< UUID of referenced object */
     int                  version;       /**< Object version */
     struct module_desc   layout_desc;   /**< Layout module used to write it */
@@ -582,7 +582,7 @@ struct copy_info {
 };
 
 struct object_info {
-    char *oid;
+    const char *oid;
     char *uuid;
     int version;
     char *user_md;

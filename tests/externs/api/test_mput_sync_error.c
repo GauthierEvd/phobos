@@ -85,7 +85,7 @@ static void sync_with_error(void **state)
 
     for (i = 0; i < object_count; i++) {
         close(xfer.xd_targets[i].xt_fd);
-        free(xfer.xd_targets[i].xt_objid);
+        free((void *)xfer.xd_targets[i].xt_objid);
         free(xfer.xd_targets[i].xt_objuuid);
     }
 

@@ -673,7 +673,7 @@ int dss_object_delete(struct dss_handle *handle,
 int dss_object_rename(struct dss_handle *handle,
                       struct object_info *objects, int objects_count,
                       struct object_info *deprec_objects, int deprec_count,
-                      char *new_oid)
+                      const char *new_oid)
 {
     GString *request = g_string_new("BEGIN;");
     struct object_info old_object_name = {

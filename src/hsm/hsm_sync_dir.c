@@ -90,7 +90,7 @@ static int sync_object(const struct object_info *obj,
         hsm_log_error(HSM_SYNC, rc, obj, params);
 
     pho_xfer_desc_clean(&xfer);
-    free(target.xt_objid);
+    free((void *) target.xt_objid);
     free(target_uuid);
     return rc;
 }
