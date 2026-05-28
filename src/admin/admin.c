@@ -1336,7 +1336,7 @@ static int _get_target_medium(struct admin_handle *adm,
     int rc;
     int i;
 
-    pho_srl_request_write_alloc(&req, 1, &tags->count);
+    pho_srl_request_write_alloc(&req, 1, &tags->count, 0);
     req.id = 2;
     req.walloc->family = source->family;
     req.walloc->prevent_duplicate = true;

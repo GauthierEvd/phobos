@@ -66,7 +66,7 @@ typedef PhoResponse__Error          pho_resp_error_t;
  * If the protocol version is greater than 127, need to increase its size
  * to an integer size (4 bytes).
  */
-#define PHO_PROTOCOL_VERSION      14
+#define PHO_PROTOCOL_VERSION      15
 /**
  * Protocol version size in bytes.
  */
@@ -453,13 +453,14 @@ const char *pho_srl_error_kind_str(pho_resp_error_t *err);
 /**
  * Allocation of write request contents.
  *
- * \param[out]      req         Pointer to the request data structure.
- * \param[in]       n_media     Number of media targeted by the request.
- * \param[in]       n_tags      Number of tags per medium targeted by the
- *                              request.
+ * \param[out]      req           Pointer to the request data structure.
+ * \param[in]       n_media       Number of media targeted by the request.
+ * \param[in]       n_tags        Number of tags per medium targeted by the
+ *                                request.
+ * \param[in]       n_avoid_media Number of media to avoid in the allocation.
  */
 void pho_srl_request_write_alloc(pho_req_t *req, size_t n_media,
-                                 size_t *n_tags);
+                                 size_t *n_tags, size_t n_avoid_media);
 
 /**
  * Allocation of read request contents.

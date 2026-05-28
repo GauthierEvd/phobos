@@ -472,6 +472,18 @@ static int xfer_remain_to_write_per_medium(
     return 0;
 }
 
+static bool extent_is_in_current_split(struct raid_io_context *io_context,
+                                       const struct extent *extent)
+{
+    size_t n_extents_per_split = n_total_extents(io_context);
+    size_t first_idx = io_context->current_split * n_extents_per_split;
+    size_t first_excluded_idx =
+        (io_context->current_split + 1) * n_extents_per_split;
+    size_t layout_idx = extent->layout_idx;
+
+    return layout_idx >= first_idx && layout_idx < first_excluded_idx;
+}
+
 static void raid_writer_rebuilder_build_allocation_req(
                                              struct pho_data_processor *proc,
                                              pho_req_t *req, size_t size)
@@ -480,6 +492,7 @@ static void raid_writer_rebuilder_build_allocation_req(
         &((struct raid_io_context *)
           proc->private_writer)[proc->current_target];
     struct pho_xfer_put_params *put_params;
+    size_t n_avoid_med = 0;
     size_t n_extents;
     size_t *n_tags;
     int i, j;
@@ -494,7 +507,18 @@ static void raid_writer_rebuilder_build_allocation_req(
     for (i = 0; i < n_extents; ++i)
             n_tags[i] = put_params->tags.count;
 
-    pho_srl_request_write_alloc(req, n_extents, n_tags);
+    if (is_copier(proc)) {
+        n_avoid_med = proc->src_layout->ext_count;
+    } else if (is_rebuilder(proc)) {
+        for (i = 0; i < proc->src_layout->ext_count; i++) {
+            struct extent *extent = &proc->src_layout->extents[i];
+
+            if (extent_is_in_current_split(io_context, extent))
+                n_avoid_med++;
+        }
+    }
+
+    pho_srl_request_write_alloc(req, n_extents, n_tags, n_avoid_med);
     free(n_tags);
 
     for (i = 0; i < n_extents; ++i) {
@@ -506,6 +530,25 @@ static void raid_writer_rebuilder_build_allocation_req(
     }
 
     req->walloc->no_split = put_params->no_split;
+
+    if (is_copier(proc) || is_rebuilder(proc)) {
+        size_t avoid_idx = 0;
+
+        for (i = 0; i < proc->src_layout->ext_count; i++) {
+            struct extent *extent = &proc->src_layout->extents[i];
+
+            if (is_rebuilder(proc) &&
+                !extent_is_in_current_split(io_context, extent))
+                continue;
+
+            req->walloc->avoid_med[avoid_idx]->family = extent->media.family;
+            req->walloc->avoid_med[avoid_idx]->name =
+                xstrdup(extent->media.name);
+            req->walloc->avoid_med[avoid_idx]->library =
+                xstrdup(extent->media.library);
+            avoid_idx++;
+        }
+    }
 }
 
 /* The older a ctime is, the higher its priority. */

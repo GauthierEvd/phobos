@@ -120,7 +120,7 @@ static void dev_picker_no_device(void **data)
 
     dev = dev_picker(devices, NULL, PHO_DEV_OP_ST_UNSPEC, NULL, NULL,
                      select_empty_loaded_mount, 0, &NO_STRING, NULL, false,
-                     false, &one_device_available);
+                     NULL, false, &one_device_available);
     assert_false(one_device_available);
     assert_null(dev);
 
@@ -139,7 +139,7 @@ static void dev_picker_one_available_device(void **data)
 
     dev = dev_picker(devices, NULL, PHO_DEV_OP_ST_UNSPEC, NULL, NULL,
                      select_empty_loaded_mount, 0, &NO_STRING, NULL, false,
-                     false, &one_device_available);
+                     NULL, false, &one_device_available);
     assert_true(one_device_available);
     assert_non_null(dev);
     assert_ptr_equal(dev, &device);
@@ -162,7 +162,7 @@ static void dev_picker_one_booked_device(void **data)
 
     dev = dev_picker(devices, NULL, PHO_DEV_OP_ST_UNSPEC, NULL, NULL,
                      select_empty_loaded_mount, 0, &NO_STRING, NULL, false,
-                     false, &one_device_available);
+                     NULL, false, &one_device_available);
     assert_false(one_device_available);
     assert_null(dev);
 
@@ -186,7 +186,7 @@ static void dev_picker_one_booked_device_one_available(void **data)
 
     dev = dev_picker(devices, NULL, PHO_DEV_OP_ST_UNSPEC, NULL, NULL,
                      select_empty_loaded_mount, 0, &NO_STRING, NULL, false,
-                     false, &one_device_available);
+                     NULL, false, &one_device_available);
     assert_true(one_device_available);
     assert_non_null(dev);
     assert_string_equal(dev->ld_dev_path, "test2");
@@ -194,7 +194,7 @@ static void dev_picker_one_booked_device_one_available(void **data)
     dev->ld_ongoing_scheduled = true;
     dev = dev_picker(devices, NULL, PHO_DEV_OP_ST_UNSPEC, NULL, NULL,
                      select_empty_loaded_mount, 0, &NO_STRING, NULL, false,
-                     false, &one_device_available);
+                     NULL, false, &one_device_available);
     assert_false(one_device_available);
     assert_null(dev);
 
@@ -218,7 +218,7 @@ static void dev_picker_search_mounted(void **data)
 
     dev = dev_picker(devices, NULL, PHO_DEV_OP_ST_MOUNTED, NULL, NULL,
                      select_empty_loaded_mount, 0, &NO_STRING, NULL, false,
-                     false, &one_device_available);
+                     NULL, false, &one_device_available);
     assert_true(one_device_available);
     assert_null(dev);
 
@@ -229,7 +229,7 @@ static void dev_picker_search_mounted(void **data)
 
     dev = dev_picker(devices, NULL, PHO_DEV_OP_ST_MOUNTED, NULL, NULL,
                      select_empty_loaded_mount, 0, &NO_STRING, NULL, false,
-                     false, &one_device_available);
+                     NULL, false, &one_device_available);
     assert_true(one_device_available);
     assert_non_null(dev);
     assert_string_equal(dev->ld_dev_path, "test2");
@@ -238,7 +238,7 @@ static void dev_picker_search_mounted(void **data)
     dev->ld_ongoing_scheduled = true;
     dev = dev_picker(devices, NULL, PHO_DEV_OP_ST_MOUNTED, NULL, NULL,
                      select_empty_loaded_mount, 0, &NO_STRING, NULL, false,
-                     false, &one_device_available);
+                     NULL, false, &one_device_available);
     assert_true(one_device_available);
     assert_null(dev);
 
@@ -262,7 +262,7 @@ static void dev_picker_search_loaded(void **data)
 
     dev = dev_picker(devices, NULL, PHO_DEV_OP_ST_LOADED, NULL, NULL,
                      select_empty_loaded_mount, 0, &NO_STRING, NULL, false,
-                     false, &one_device_available);
+                     NULL, false, &one_device_available);
     assert_true(one_device_available);
     assert_null(dev);
 
@@ -273,7 +273,7 @@ static void dev_picker_search_loaded(void **data)
 
     dev = dev_picker(devices, NULL, PHO_DEV_OP_ST_LOADED, NULL, NULL,
                      select_empty_loaded_mount, 0, &NO_STRING, NULL, false,
-                     false, &one_device_available);
+                     NULL, false, &one_device_available);
     assert_true(one_device_available);
     assert_null(dev);
 
@@ -281,7 +281,7 @@ static void dev_picker_search_loaded(void **data)
 
     dev = dev_picker(devices, NULL, PHO_DEV_OP_ST_LOADED, NULL, NULL,
                      select_empty_loaded_mount, 0, &NO_STRING, NULL, false,
-                     false, &one_device_available);
+                     NULL, false, &one_device_available);
     assert_true(one_device_available);
     assert_null(dev);
 
@@ -289,7 +289,7 @@ static void dev_picker_search_loaded(void **data)
 
     dev = dev_picker(devices, NULL, PHO_DEV_OP_ST_LOADED, NULL, NULL,
                      select_empty_loaded_mount, 0, &NO_STRING, NULL, false,
-                     false, &one_device_available);
+                     NULL, false, &one_device_available);
     assert_true(one_device_available);
     assert_non_null(dev);
     assert_string_equal(dev->ld_dev_path, "test1");
@@ -322,7 +322,7 @@ static void dev_picker_available_space(void **data)
     gptr_array_from_list(devices, &device, 2, sizeof(device[0]));
 
     dev = dev_picker(devices, NULL, PHO_DEV_OP_ST_MOUNTED, NULL, NULL,
-                     select_first_fit, 200, &NO_STRING, NULL, true, false,
+                     select_first_fit, 200, &NO_STRING, NULL, true, NULL, false,
                      &one_device_available);
     assert_true(one_device_available);
     assert_null(dev);
@@ -330,7 +330,7 @@ static void dev_picker_available_space(void **data)
     medium_set_size(&medium[0], 300);
 
     dev = dev_picker(devices, NULL, PHO_DEV_OP_ST_MOUNTED, NULL, NULL,
-                     select_first_fit, 200, &NO_STRING, NULL, true, false,
+                     select_first_fit, 200, &NO_STRING, NULL, true, NULL, false,
                      &one_device_available);
     assert_true(one_device_available);
     assert_non_null(dev);
@@ -338,7 +338,7 @@ static void dev_picker_available_space(void **data)
 
     dev->ld_ongoing_scheduled = true;
     dev = dev_picker(devices, NULL, PHO_DEV_OP_ST_MOUNTED, NULL, NULL,
-                     select_first_fit, 200, &NO_STRING, NULL, true, false,
+                     select_first_fit, 200, &NO_STRING, NULL, true, NULL, false,
                      &one_device_available);
     assert_true(one_device_available);
     assert_null(dev);
@@ -370,7 +370,7 @@ static void dev_picker_flags(void **data)
     device[0].ld_ongoing_io = true;
     device[1].ld_dss_media_info->flags.put = false;
     dev = dev_picker(devices, NULL, PHO_DEV_OP_ST_MOUNTED, NULL, NULL,
-                     select_first_fit, 0, &NO_STRING, NULL, true, false,
+                     select_first_fit, 0, &NO_STRING, NULL, true, NULL, false,
                      &one_device_available);
     assert_true(one_device_available);
     assert_null(dev);
@@ -378,11 +378,60 @@ static void dev_picker_flags(void **data)
     device[1].ld_dss_media_info->flags.put = true;
     device[1].ld_dss_media_info->fs.status = PHO_FS_STATUS_FULL;
     dev = dev_picker(devices, NULL, PHO_DEV_OP_ST_MOUNTED, NULL, NULL,
-                     select_first_fit, 0, &NO_STRING, NULL, true, false,
+                     select_first_fit, 0, &NO_STRING, NULL, true, NULL, false,
                      &one_device_available);
     assert_true(one_device_available);
     assert_null(dev);
 
+    g_ptr_array_free(devices, true);
+    cleanup_device(&device[0]);
+    cleanup_device(&device[1]);
+}
+
+static void dev_picker_avoids_write_medium(void **data)
+{
+    GPtrArray *devices = g_ptr_array_new();
+    struct media_info medium[2];
+    bool one_device_available;
+    struct lrs_dev device[2];
+    struct lrs_dev *dev;
+    size_t n_tags = 0;
+    pho_req_t req;
+
+    create_device(&device[0], "test1", LTO5_MODEL, NULL);
+    create_device(&device[1], "test2", LTO5_MODEL, NULL);
+
+    create_medium(&medium[0], "test1");
+    create_medium(&medium[1], "test2");
+
+    pho_srl_request_write_alloc(&req, 1, &n_tags, 1);
+    req.walloc->avoid_med[0]->family = PHO_RSC_TAPE;
+    req.walloc->avoid_med[0]->name = xstrdup("test1");
+    req.walloc->avoid_med[0]->library = xstrdup("legacy");
+
+    gptr_array_from_list(devices, &device, 2, sizeof(device[0]));
+
+    load_medium(&device[0], &medium[0]);
+    load_medium(&device[1], &medium[1]);
+
+    dev = dev_picker(devices, NULL, PHO_DEV_OP_ST_LOADED, NULL, NULL,
+                     select_empty_loaded_mount, 0, &NO_STRING, NULL, true,
+                     req.walloc, false, &one_device_available);
+    assert_true(one_device_available);
+    assert_non_null(dev);
+    assert_string_equal(dev->ld_dev_path, "test2");
+
+    mount_medium(&device[0], &medium[0]);
+    mount_medium(&device[1], &medium[1]);
+
+    dev = dev_picker(devices, NULL, PHO_DEV_OP_ST_MOUNTED, NULL, NULL,
+                     select_first_fit, 0, &NO_STRING, NULL, true, req.walloc,
+                     false, &one_device_available);
+    assert_true(one_device_available);
+    assert_non_null(dev);
+    assert_string_equal(dev->ld_dev_path, "test2");
+
+    pho_srl_request_free(&req, false);
     g_ptr_array_free(devices, true);
     cleanup_device(&device[0]);
     cleanup_device(&device[1]);
@@ -557,7 +606,7 @@ static void create_request(struct req_container *reqc,
         params->n_media = n;
         params->media = xcalloc(n, sizeof(*params->media));
 
-        pho_srl_request_write_alloc(reqc->req, n, n_tags);
+        pho_srl_request_write_alloc(reqc->req, n, n_tags, 0);
         free(n_tags);
 
         for (i = 0; i < n; i++)
@@ -2206,6 +2255,7 @@ int main(void)
         cmocka_unit_test(dev_picker_search_loaded),
         cmocka_unit_test(dev_picker_available_space),
         cmocka_unit_test(dev_picker_flags),
+        cmocka_unit_test(dev_picker_avoids_write_medium),
     };
     const struct CMUnitTest test_io_sched_api[] = {
         cmocka_unit_test(io_sched_add_device_twice),

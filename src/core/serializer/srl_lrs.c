@@ -155,7 +155,7 @@ const char *pho_srl_error_kind_str(pho_resp_error_t *err)
 }
 
 void pho_srl_request_write_alloc(pho_req_t *req, size_t n_media,
-                                 size_t *n_tags)
+                                 size_t *n_tags, size_t n_avoid_media)
 {
     int i;
 
@@ -182,6 +182,19 @@ void pho_srl_request_write_alloc(pho_req_t *req, size_t n_media,
                 xcalloc(n_tags[i], sizeof(*req->walloc->media[i]->tags));
 
         req->walloc->media[i]->empty_medium = false;
+    }
+
+    req->walloc->n_avoid_med = n_avoid_media;
+    if (n_avoid_media > 0) {
+        req->walloc->avoid_med = xmalloc(n_avoid_media *
+                                         sizeof(*req->walloc->avoid_med));
+        for (i = 0; i < n_avoid_media; i++) {
+            req->walloc->avoid_med[i] =
+                xmalloc(sizeof(*req->walloc->avoid_med[i]));
+            pho_resource_id__init(req->walloc->avoid_med[i]);
+        }
+    } else {
+        req->walloc->avoid_med = NULL;
     }
 }
 
@@ -305,6 +318,12 @@ void pho_srl_request_free(pho_req_t *req, bool unpack)
             free(req->walloc->media[i]->tags);
             free(req->walloc->media[i]);
         }
+        for (i = 0; i < req->walloc->n_avoid_med; i++) {
+            free(req->walloc->avoid_med[i]->name);
+            free(req->walloc->avoid_med[i]->library);
+            free(req->walloc->avoid_med[i]);
+        }
+        free(req->walloc->avoid_med);
         free(req->walloc->media);
         free(req->walloc->library);
         free(req->walloc->grouping);

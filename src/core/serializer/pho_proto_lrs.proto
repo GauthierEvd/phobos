@@ -51,6 +51,7 @@ message PhoRequest {
                                                // to put all the data on the
                                                // same medium.
         optional string grouping = 6;          // Targeted grouping
+        repeated PhoResourceId avoid_med = 7;  // Media to avoid allocating
     }
 
     /**

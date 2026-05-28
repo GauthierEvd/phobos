@@ -216,7 +216,7 @@ static void build_write_request(struct context *context)
     size_t n = 0;
     int rc;
 
-    pho_srl_request_write_alloc(&req.req, 1, &n);
+    pho_srl_request_write_alloc(&req.req, 1, &n, 0);
 
     req.req.walloc->media[0]->size = 0;
     req.req.walloc->family = PHO_RSC_TAPE;

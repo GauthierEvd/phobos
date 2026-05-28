@@ -1005,6 +1005,27 @@ static int medium_in_devices(const struct media_info *medium,
     return 0;
 }
 
+static bool write_avoids_medium(const pho_req_write_t *wreq,
+                                const struct media_info *medium)
+{
+    if (!wreq || wreq->n_avoid_med == 0)
+        return false;
+
+    for (int i = 0; i < wreq->n_avoid_med; i++) {
+        pho_rsc_id_t *avoid = wreq->avoid_med[i];
+        struct pho_id id = {
+            .family = avoid->family,
+        };
+
+        pho_id_name_set(&id, avoid->name, avoid->library);
+
+        if (pho_id_equal(&id, &medium->rsc.id))
+            return true;
+    }
+
+    return false;
+}
+
 /**
  * Get a suitable medium for a write operation.
  *
@@ -1154,6 +1175,12 @@ int sched_select_medium(struct io_scheduler *io_sched,
         bool already_alloc;
         bool sched_ready;
 
+        if (write_avoids_medium(reqc->req->walloc, curr)) {
+            pho_debug("Skipping medium "FMT_PHO_ID" from write allocation "
+                      "avoid list", PHO_ID(curr->rsc.id));
+            continue;
+        }
+
         /* exclude medium already booked for this allocation */
         rc = medium_in_devices(curr, reqc, n_med, not_alloc, &already_alloc);
         if (rc)
@@ -1264,8 +1291,15 @@ err_nores:
 static bool medium_is_write_compatible(struct media_info *medium,
                                        const char *grouping,
                                        const struct string_array *required_tags,
+                                       const pho_req_write_t *wreq,
                                        bool empty_medium)
 {
+    if (write_avoids_medium(wreq, medium)) {
+        pho_debug("Media "FMT_PHO_ID" is in the write allocation avoid list",
+                  PHO_ID(medium->rsc.id));
+        return false;
+    }
+
     if (medium->rsc.adm_status != PHO_RSC_ADM_ST_UNLOCKED) {
         pho_debug("Media (family '%s', name '%s', library '%s') is not "
                   "unlocked but '%s'",
@@ -1375,6 +1409,7 @@ typedef int (*device_select_func_t)(size_t required_size,
  * @param pmedia         Media that should be used by the drive to check
  *                       compatibility (ignored if NULL)
  * @param[in] is_write   Set to true if we want a device to write
+ * @param[in] wreq       Write request carrying media to avoid
  * @param[in] empty_medium   Set to true if we want an empty medium
  * @param[out] one_drive_available  Return true if there is at least one drive
  *                                  that is available to perform an action
@@ -1389,8 +1424,8 @@ struct lrs_dev *dev_picker(GPtrArray *devices,
                            size_t required_size,
                            const struct string_array *media_tags,
                            struct media_info *pmedia,
-                           bool is_write, bool empty_medium,
-                           bool *one_drive_available)
+                           bool is_write, const pho_req_write_t *wreq,
+                           bool empty_medium, bool *one_drive_available)
 {
     struct lrs_dev *selected = NULL;
     int selected_i = -1;
@@ -1460,7 +1495,7 @@ struct lrs_dev *dev_picker(GPtrArray *devices,
         /* if pmedia is set, we don't want to use the medium currently loaded */
         if (is_write && !pmedia && itr->ld_dss_media_info &&
             !medium_is_write_compatible(itr->ld_dss_media_info, grouping,
-                                        media_tags, empty_medium)
+                                        media_tags, wreq, empty_medium)
             )
             goto unlock_continue;
 
@@ -1471,7 +1506,7 @@ struct lrs_dev *dev_picker(GPtrArray *devices,
 
             if (is_write &&
                 !medium_is_write_compatible(pmedia, grouping, media_tags,
-                                            empty_medium))
+                                            wreq, empty_medium))
                 goto unlock_continue;
 
             rc = tape_drive_compat(pmedia, itr, &compatible);

@@ -14,6 +14,7 @@ int main(int argc, char **argv)
     struct pho_xfer_target target_copy = {0};
     struct pho_xfer_target target = {0};
     struct pho_xfer_desc xfer_copy = {0};
+    struct pho_xfer_desc empty = {0};
     struct pho_xfer_desc xfer = {0};
     struct stat statbuf;
     int fd;
@@ -82,6 +83,7 @@ int main(int argc, char **argv)
         exit(rc);
     }
 
+    xfer = empty;
     xfer.xd_op = PHO_XFER_OP_PUT;
     xfer.xd_params.put.family = PHO_RSC_DIR;
     xfer.xd_params.put.grouping = argv[5];
@@ -91,7 +93,6 @@ int main(int argc, char **argv)
     target.xt_size = statbuf.st_size;
     xfer.xd_targets = &target;
 
-    phobos_init();
     rc = phobos_put(&xfer, 1, NULL, NULL);
     if (rc) {
         printf("Error at put: %d, %s .\n", -rc, strerror(-rc));
@@ -100,6 +101,7 @@ int main(int argc, char **argv)
 
     pho_xfer_desc_clean(&xfer);
 
+    xfer_copy = empty;
     xfer_copy.xd_op = PHO_XFER_OP_COPY;
     xfer_copy.xd_params.copy = (struct pho_xfer_copy_params){0};
     xfer_copy.xd_params.copy.get.scope = DSS_OBJ_ALIVE;
@@ -117,6 +119,7 @@ int main(int argc, char **argv)
 
     pho_xfer_desc_clean(&xfer_copy);
 
+    phobos_fini();
     close(fd);
     exit(EXIT_SUCCESS);
 }

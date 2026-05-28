@@ -105,7 +105,7 @@ static int test_bad_put(void *arg)
     int rc = 0;
 
     // Bad resource family
-    pho_srl_request_write_alloc(&req, 1, n_tags);
+    pho_srl_request_write_alloc(&req, 1, n_tags, 0);
     req.id = 0;
     req.walloc->family = PHO_RSC_INVAL;
     req.walloc->media[0]->size = 1;
@@ -197,7 +197,7 @@ static int send_write_and_release_with_rc(struct pho_comm_info *ci,
     size_t size = 1;
     pho_req_t req;
 
-    pho_srl_request_write_alloc(&req, 1, n_tags);
+    pho_srl_request_write_alloc(&req, 1, n_tags, 0);
     req.id = 0;
     req.walloc->family = PHO_RSC_DIR;
     req.walloc->media[0]->size = size;
@@ -284,9 +284,9 @@ static int test_bad_mput(void *arg)
     int i;
 
     tags[0] = 0;
-    pho_srl_request_write_alloc(&reqs[0], 1, tags);
+    pho_srl_request_write_alloc(&reqs[0], 1, tags, 0);
     tags[0] = 1;
-    pho_srl_request_write_alloc(&reqs[1], 1, tags);
+    pho_srl_request_write_alloc(&reqs[1], 1, tags, 0);
 
     reqs[0].walloc->media[0]->tags = NULL;
     reqs[1].walloc->media[0]->tags[0] = xstrdup("invalid-tag");

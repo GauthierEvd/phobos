@@ -49,6 +49,29 @@ function setup
     $phobos dir format --unlock ${DIRS[@]}
 }
 
+function setup_avoid
+{
+    setup_tables
+    setup_test_dirs
+
+    INPUT_FILE="$DIR_TEST_IN/file"
+    dd if=/dev/urandom of="$INPUT_FILE" bs=64K count=1
+
+    DIRS=(
+          $(mktemp -d /tmp/test_pho.XXXX)
+          $(mktemp -d /tmp/test_pho.XXXX)
+          $(mktemp -d /tmp/test_pho.XXXX)
+          $(mktemp -d /tmp/test_pho.XXXX)
+         )
+
+    invoke_lrs
+
+    $phobos dir add --tags "rebuild" \
+            ${DIRS[0]} ${DIRS[1]} ${DIRS[2]}
+    $phobos dir add ${DIRS[3]}
+    $phobos dir format --unlock ${DIRS[@]}
+}
+
 function cleanup
 {
     waive_lrs
@@ -259,6 +282,30 @@ function test_copy_rebuild_raid1_3_replica
     test_copy_rebuild_raid1_impl 3 0 1
 }
 
+function test_copy_rebuild_raid1_avoid_medium
+{
+    $phobos put -f dir --tags "rebuild" -l raid1 --lyt-params repl_count=3 \
+            "$INPUT_FILE" oid
+
+    local initial_media=($(get_extent_info oid source media_name))
+    local lost_medium="${initial_media[0]}"
+    local locked_medium="${initial_media[2]}"
+
+    waive_lrs
+    $phobos dir delete --lost "$lost_medium"
+    invoke_lrs
+
+    $phobos dir lock "${DIRS[3]}"
+
+    copy_status_should_be oid source readable
+
+    $valg_phobos copy rebuild oid source &&
+        error "Copy rebuild should have failed without a writable medium"
+
+    return 0
+}
+
 TESTS=("setup; test_copy_rebuild_complete_incomplete; cleanup"
        "setup; test_copy_rebuild_raid1_2_replica; cleanup"
-       "setup; test_copy_rebuild_raid1_3_replica; cleanup")
+       "setup; test_copy_rebuild_raid1_3_replica; cleanup"
+       "setup_avoid; test_copy_rebuild_raid1_avoid_medium; cleanup")

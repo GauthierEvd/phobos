@@ -324,7 +324,7 @@ static int find_read_device(struct io_scheduler *io_sched,
                           io_sched->io_sched_hdl->lock_handle->dss,
                           PHO_DEV_OP_ST_UNSPEC, medium->rsc.id.library, NULL,
                           select_empty_loaded_mount, 0, &NO_STRING, medium,
-                          false, false, NULL);
+                          false, NULL, false, NULL);
 
         return 0;
     }
@@ -388,7 +388,7 @@ search_again:
                       io_sched->io_sched_hdl->lock_handle->dss,
                       PHO_DEV_OP_ST_MOUNTED, wreq->library,
                       targeted_grouping, dev_select_policy, size, &tags, NULL,
-                      true, wreq->media[index]->empty_medium,
+                      true, wreq, wreq->media[index]->empty_medium,
                       &one_drive_available);
     /* If we find a dev, we exit. */
     /* If there is no chance to find a device, we also exit right now. */
@@ -400,7 +400,7 @@ search_again:
                       io_sched->io_sched_hdl->lock_handle->dss,
                       PHO_DEV_OP_ST_LOADED, wreq->library,
                       targeted_grouping, dev_select_policy, size, &tags, NULL,
-                      true, wreq->media[index]->empty_medium,
+                      true, wreq, wreq->media[index]->empty_medium,
                       &one_drive_available);
     if (*dev || !one_drive_available)
         return 0;
@@ -444,7 +444,7 @@ find_device:
                       io_sched->io_sched_hdl->lock_handle->dss,
                       PHO_DEV_OP_ST_UNSPEC, wreq->library,
                       targeted_grouping, select_empty_loaded_mount, 0,
-                      &NO_STRING, *medium, true, false, NULL);
+                      &NO_STRING, *medium, true, wreq, false, NULL);
     if (*dev)
         return 0;
 
@@ -476,7 +476,7 @@ static int find_format_device(struct io_scheduler *io_sched,
                           PHO_DEV_OP_ST_UNSPEC,
                           med_id->library, NULL, select_empty_loaded_mount,
                           0, &NO_STRING, reqc->params.format.medium_to_format,
-                          false, false, NULL);
+                          false, NULL, false, NULL);
 
         return 0;
     }
