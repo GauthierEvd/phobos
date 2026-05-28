@@ -2019,8 +2019,6 @@ UNLOCK:
 CLEAN:
         rc = rc ? : xfers[i].xd_rc;
         g_string_free(md_repr, true);
-
-        pho_xfer_desc_clean(xfers);
     }
 
     dss_fini(&dss);
