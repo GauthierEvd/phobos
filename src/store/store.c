@@ -2565,6 +2565,12 @@ static void xfer_put_param_clean(struct pho_xfer_desc *xfer)
     pho_attrs_free(&xfer->xd_params.put.lyt_params);
 }
 
+static void xfer_get_param_clean(struct pho_xfer_desc *xfer)
+{
+    free(xfer->xd_params.get.node_name);
+    xfer->xd_params.get.node_name = NULL;
+}
+
 static void xfer_copy_param_clean(struct pho_xfer_desc *xfer)
 {
     free((void *)xfer->xd_params.copy.put.grouping);
@@ -2574,14 +2580,13 @@ static void xfer_copy_param_clean(struct pho_xfer_desc *xfer)
 }
 
 static void (*xfer_param_cleaner[PHO_XFER_OP_LAST])(struct pho_xfer_desc *) = {
-    [PHO_XFER_OP_PUT]     = xfer_put_param_clean,
-    [PHO_XFER_OP_GET]     = NULL,
-    [PHO_XFER_OP_GETMD]   = NULL,
-    [PHO_XFER_OP_SETMD]   = NULL,
-    [PHO_XFER_OP_DEL]     = NULL,
-    [PHO_XFER_OP_UNDEL]   = NULL,
-    [PHO_XFER_OP_COPY]    = xfer_copy_param_clean,
-    [PHO_XFER_OP_REBUILD] = xfer_copy_param_clean,
+    [PHO_XFER_OP_PUT]   = xfer_put_param_clean,
+    [PHO_XFER_OP_GET]   = xfer_get_param_clean,
+    [PHO_XFER_OP_GETMD] = NULL,
+    [PHO_XFER_OP_SETMD] = NULL,
+    [PHO_XFER_OP_DEL]   = NULL,
+    [PHO_XFER_OP_UNDEL] = NULL,
+    [PHO_XFER_OP_COPY]  = xfer_copy_param_clean,
 };
 
 void pho_xfer_desc_clean(struct pho_xfer_desc *xfer)
