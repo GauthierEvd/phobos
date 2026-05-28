@@ -254,14 +254,28 @@ struct pho_xfer_desc {
  */
 struct pho_xfer_target {
     char             *xt_objid;   /**< Object ID to GET/PUT/DEL/COPY. */
-    char             *xt_objuuid; /**< Object UUID to GET/PUT/DEL/COPY. */
+    char             *xt_objuuid; /**< Object UUID to GET/GETMD/SETMD/DEL/UNDEL/
+                                    *  COPY
+                                    *  Phobos duplicates this field internally
+                                    *  if not NULL. Therefore, the caller
+                                    *  remains responsible for freeing their own
+                                    *  original pointer.
+                                    *  The internal duplicate will automatically
+                                    *  be freed when the caller invokes
+                                    *  pho_xfer_clean().
+                                    */
     int               xt_version; /**< Object version. */
     int               xt_fd;      /**< FD of the source/destination while doing
                                     *  a GET or PUT. If it's a PUT, xt_fd is
                                     *  the object's source. If it's a GET,
                                     *  xt_fd is where the object is retrieved.
                                     */
-    struct pho_attrs  xt_attrs;   /**< User defined metadata. */
+    struct pho_attrs  xt_attrs;   /**< User defined metadata.
+                                    *  Since this struct is populated using the
+                                    *  Phobos API, it must be freed by calling
+                                    *  either pho_attrs_free() or
+                                    *  pho_xfer_clean().
+                                    */
     ssize_t           xt_size;    /**< Amount of data to write during a PUT */
     int               xt_rc;      /**< Outcome for this target's xfer. */
 };
@@ -300,6 +314,15 @@ void phobos_fini(void);
  *
  * The xd_params can be provided or they will be overriden with default values.
  *
+ * Memory ownership:
+ *  - xt_objid: Provided by the caller. Phobos will not free it.
+ *  - xt_attrs: Set using pho_attr_set(). Must be freed by calling
+ *              pho_xfer_desc_clean()
+ * For xd_params.put fields:
+ *  - tags and lyt_params: Ownership transferred to Phobos, who will free it.
+ *  - if other string pointers are allocated by the caller, Phobos will not free
+ *    them.
+ *
  * \param[in,out]  xfers  List of Xfer descriptors
  * \param[in]      n      Number of Xfer descriptors
  * \param[in]      cb     Optional completion callback per Xfer
@@ -320,9 +343,6 @@ int phobos_put(struct pho_xfer_desc *xfers, size_t n,
  *  - xt_objid   : the target object identifier
  *
  *  - xt_objuuid : uuid of the object to retrieve (OPTIONAL)
- *                 if not NULL, this field is duplicated internally and freed by
- *                 pho_xfer_desc_clean(). The caller has to make sure to keep
- *                 a copy of this pointer if it needs to be freed.
  *                 if NULL and there is an object alive, get the current
  *                 generation
  *                 if NULL and there is no object alive, check the deprecated
@@ -349,6 +369,16 @@ int phobos_put(struct pho_xfer_desc *xfers, size_t n,
  * object table. Otherwise, the object table is queried first and then the
  * deprecated_object table.
  *
+ * Memory ownership:
+ *  - xt_objid: Provided by the caller. pho_xfer_desc_clean() will not free it.
+ *  - xt_objuuid: if not NULL, this field is duplicated internally and freed by
+ *                pho_xfer_desc_clean(). The caller has to make sure to keep a
+ *                copy of this pointer if it needs to be freed.
+ *  - xt_attrs: [out] Filled by phobos_get(). Freed by calling
+ *              pho_xfer_desc_clean().
+ * For xd_params.get fields:
+ *  - copy_name: Provided by the caller. Ownership retained by the caller
+ *
  * \param[in,out]  xfers  List of Xfer descriptors
  * \param[in]      n      Number of Xfer descriptors
  * \param[in]      cb     Optional completion callback per Xfer
@@ -365,13 +395,23 @@ int phobos_get(struct pho_xfer_desc *xfers, size_t n,
  * Retrieve N file metadata from the object store
  *
  * Each Xfer descriptor must provide ONLY one target. A target must provide:
- *  - xt_objid   : the target object identifier (MANDATORY)
- *  - xt_objuuid : uuid of the object to retrieve (OPTIONAL)
+ *  - xt_objid   : the target object identifier (OPTIONAL if xt_objuuid is
+ *                 provided)
+ *  - xt_objuuid : uuid of the object to retrieve (OPTIONAL if xt_objid is
+ *                 provided)
  *  - xt_version : version of the object to retrieve (OPTIONAL)
  *                 if 0, get the most recent object. Otherwise, the object with
  *                 the matching version is returned if it exists
  *
  * xt_attrs is filled with the retrieved metadata.
+ *
+ * Memory ownership:
+ *  - xt_objid: Provided by the caller. pho_xfer_desc_clean() will not free it.
+ *  - xt_objuuid: if not NULL, this field is duplicated internally and freed by
+ *                pho_xfer_desc_clean(). The caller has to make sure to keep a
+ *                copy of this pointer if it needs to be freed.
+ *  - xt_attrs: [out] Filled by phobos_getmd(). Freed by calling
+ *              pho_xfer_desc_clean().
  *
  * \param[in,out]  xfers  List of Xfer descriptors
  * \param[in]      n      Number of Xfer descriptors
@@ -392,12 +432,20 @@ int phobos_getmd(struct pho_xfer_desc *xfers, size_t n);
  * @param[in]   num_xfers   Number of objects to update
  *
  * The following fields are used inside the xfer descriptor:
- * - xt_objid: ID of the object to update
+ * - xt_objid: ID of the object to update cannot be NULL
  * - xt_objuuid: UUID of the object to update
  * - xt_version: object version targeted
  * - xt_attrs: the new metadata to write
  *
  * Other fields are not used.
+ *
+ * Memory ownership:
+ *  - xt_objid: Provided by the caller. pho_xfer_desc_clean() will not free it.
+ *  - xt_objuuid: if not NULL, this field is duplicated internally and freed by
+ *                pho_xfer_desc_clean(). The caller has to make sure to keep a
+ *                copy of this pointer if it needs to be freed.
+ *  - xt_attrs: Set using pho_attr_set(). Must be freed by calling
+ *              pho_xfer_desc_clean()
  *
  * @return              0 on success or -errno on failure.
  *
@@ -455,7 +503,17 @@ int phobos_setmd(struct pho_xfer_desc *xfers, size_t num_xfers);
  * If the scope is all, Phobos will search the object in the alive table first
  * and then in the deprecated table. Phobos will apply the rules described
  * above.
-
+ *
+ * Memory ownership:
+ *  - xt_objid: Provided by the caller. pho_xfer_desc_clean() will not free it.
+ *  - xt_objuuid: if not NULL, this field is duplicated internally and freed by
+ *                pho_xfer_desc_clean(). The caller has to make sure to keep a
+ *                copy of this pointer if it needs to be freed.
+ *  - xt_attrs: [out] Set by phobos_delete only on hard delete. Must be freed by
+ *              calling pho_xfer_desc_clean()
+ * For xd_params.delete fields:
+ *  - copy_name: Provided by the caller. pho_xfer_desc_clean() will not free it.
+ *
  * @param[in]   xfers       Objects or copies to delete
  * @param[in]   num_xfers   Number of objects or copies to delete
  *
@@ -493,6 +551,12 @@ int phobos_delete_incomplete_copy(bool dry_run, const int * const delay_second);
  * Each Xfer descriptor must provide ONLY one target. A target must provide:
  *  - xt_objid   : the target object identifier
  *  - xt_objuuid : uuid of the object to undelete (OPTIONAL)
+ *
+ * Memory ownership:
+ *  - xt_objid: Provided by the caller. pho_xfer_desc_clean() will not free it.
+ *  - xt_objuuid: if not NULL, this field is duplicated internally and freed by
+ *                pho_xfer_desc_clean(). The caller has to make sure to keep a
+ *                copy of this pointer if it needs to be freed.
  *
  * @param[in]   xfers       Objects to undelete, only the uuid field is used
  * @param[in]   num_xfers   Number of objects to undelete
@@ -612,6 +676,19 @@ int phobos_rename(const char *old_oid, const char *uuid, char *new_oid);
  * and then in the deprecated table. Phobos will apply the rules described
  * above.
  *
+ * Memory ownership:
+ *  - xt_objid: Provided by the caller. pho_xfer_desc_clean() will not free it.
+ *  - xt_objuuid: if not NULL, this field is duplicated internally and freed by
+ *                pho_xfer_desc_clean(). The caller has to make sure to keep a
+ *                copy of this pointer if it needs to be freed.
+ *  - xt_attrs: Set using pho_attr_set(). Freed by Phobos calling
+ *              pho_xfer_desc_clean().
+ * For the xd_params.copy fields:
+ *  - copy.put.tags & copy.put.lyt_params: Freed by calling pho_xfer_desc_clean.
+ *  - get.copy_name / put.copy_name / other strings: Allocated and freed by
+ *                                            caller. pho_xfer_desc_clean() will
+ *                                            not free them.
+ *
  * \param[in,out]  xfers  List of Xfer descriptors
  * \param[in]      n      Number of Xfer descriptors
  * \param[in]      cb     Optional completion callback per Xfer
@@ -627,8 +704,12 @@ int phobos_copy(struct pho_xfer_desc *xfers, size_t n,
 int phobos_copy_rebuild(struct pho_xfer_desc *xfers, size_t num_xfers);
 
 /**
- * Clean a pho_xfer_desc structure by freeing the uuid and attributes, and
- * the tags in case the xfer corresponds to a PUT operation.
+ * Clean a pho_xfer_desc structure by freeing the uuid and attributes. For each
+ * pho_xfer_target struct it will call the pho_xfer_clean() function.
+ * In case the xfer corresponds to a PUT operation the layout and the tags field
+ * are freed from the pho_xfer_put_params structure.
+ * In case the xfer corresponds to a COPY operation the layout, the tags and the
+ * grouping field are freed from the pho_xfer_put_params structure
  *
  * @param[in]   xfer        The xfer structure to clean.
  *
@@ -637,7 +718,9 @@ int phobos_copy_rebuild(struct pho_xfer_desc *xfers, size_t num_xfers);
 void pho_xfer_desc_clean(struct pho_xfer_desc *xfer);
 
 /**
- * Clean a pho_xfer_target structure by freeing the uuid and attributes
+ * Clean a pho_xfer_target structure by freeing the following fields:
+ * the object uuid and the attributes.
+ * No other field is freed.
  *
  * @param[in]   xfer        The xfer_target structure to clean.
  *
