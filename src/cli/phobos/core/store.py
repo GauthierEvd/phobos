@@ -729,9 +729,14 @@ class UtilClient:
             if uuid is not None:
                 xfers[i].xd_targets[0].xt_objuuid = uuid
 
-        rc = LIBPHOBOS.phobos_undelete(xfers, n_xfers)
-        if rc:
-            raise EnvironmentError(rc, f"Failed to undelete objects '{oids}'")
+        try:
+            rc = LIBPHOBOS.phobos_undelete(xfers, n_xfers)
+            if rc:
+                raise EnvironmentError(
+                    rc, f"Failed to undelete objects '{oids}'")
+        finally:
+            Store.xfer_desc_release(xfers)
+
 
     @staticmethod
     def object_list(res, is_pattern, metadata, uuid, version, scope, **kwargs): # pylint: disable=too-many-arguments,too-many-locals

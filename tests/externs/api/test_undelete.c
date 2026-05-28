@@ -49,8 +49,9 @@ static bool test_undelete_null_list(void)
 
 static bool test_undelete(void)
 {
-    struct pho_xfer_target targets[2];
-    struct pho_xfer_desc xfers[2];
+    struct pho_xfer_target targets[2] = {0};
+    struct pho_xfer_desc xfers[2] = {0};
+    bool success = true;
     int rc;
 
     /* test-oid1 */
@@ -72,18 +73,28 @@ static bool test_undelete(void)
     /* undelete */
     pho_info("Try to undelete two xfers");
     rc = phobos_undelete(xfers, 2);
-    if (rc)
-        return false;
+    if (rc) {
+        success = false;
+        goto out;
+    }
+
+    pho_xfer_desc_clean(&xfers[0]);
+    pho_xfer_desc_clean(&xfers[1]);
+
+    targets[0].xt_objuuid = "00112233445566778899aabbccddeef1";
 
     /* undelete again test-oid1 */
     pho_info("Try to undelete an already existing object");
     rc = phobos_undelete(xfers, 1);
     if (rc != -EEXIST) {
         pho_info("rc is %d instead of %d / -EEXIST", rc, -EEXIST);
-        return false;
+        success = false;
     }
 
-    return true;
+out:
+    pho_xfer_desc_clean(&xfers[0]);
+    pho_xfer_desc_clean(&xfers[1]);
+    return success;
 }
 
 int main(void)
