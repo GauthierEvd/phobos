@@ -2281,7 +2281,7 @@ int phobos_copy(struct pho_xfer_desc *xfers, size_t n,
                       "A xfer to create a new copy must not have a grouping "
                       "put param because the grouping is inherited from the "
                       "existing object. \"%s\" was set instead of NULL.",
-                      xfers[i].xd_params.put.grouping);
+                      xfers[i].xd_params.copy.put.grouping);
             return rc;
         }
 
