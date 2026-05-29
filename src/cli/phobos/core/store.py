@@ -707,9 +707,12 @@ class UtilClient:
             xfers[i].xd_flags = PHO_XFER_OBJ_HARD_DEL if hard_delete else 0
             xfers[i].xd_params.delete = XferDelParams(del_params)
 
-        rc = LIBPHOBOS.phobos_delete(xfers, n_xfers)
-        if rc:
-            raise EnvironmentError(rc, f"Failed to delete objects '{oids}'")
+        try:
+            rc = LIBPHOBOS.phobos_delete(xfers, n_xfers)
+            if rc:
+                raise EnvironmentError(rc, f"Failed to delete objects '{oids}'")
+        finally:
+            Store.xfer_desc_release(xfers)
 
     @staticmethod
     def object_undelete(oids, uuid):
@@ -846,11 +849,15 @@ class UtilClient:
         xfers[0].xd_params.delete = XferDelParams(del_params)
         xfers[0].xd_flags = PHO_XFER_COPY_HARD_DEL
 
-        rc = LIBPHOBOS.phobos_delete(xfers, n_xfers)
+        try:
+            rc = LIBPHOBOS.phobos_delete(xfers, n_xfers)
 
-        if rc:
-            raise EnvironmentError(rc, f"Failed to delete '{oid}''s copy "
-                                   f"'{del_params.copy_name}'")
+            if rc:
+                raise EnvironmentError(rc,
+                                       f"Failed to delete '{oid}''s copy "
+                                       f"'{del_params.copy_name}'")
+        finally:
+            Store.xfer_desc_release(xfers)
 
     @staticmethod
     def delete_incomplete_copy(dry_run):
