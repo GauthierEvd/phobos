@@ -72,9 +72,47 @@ function setup_avoid
     $phobos dir format --unlock ${DIRS[@]}
 }
 
+function setup_raid1_split_rebuild
+{
+    setup_tables
+    setup_test_dirs
+
+    INPUT_FILE="$DIR_TEST_IN/file"
+    dd if=/dev/urandom of="$INPUT_FILE" bs=1K count=2049
+
+    DIRS=(
+          $(make_tmp_fs 1M)
+          $(make_tmp_fs 1M)
+          $(make_tmp_fs 1M)
+          $(make_tmp_fs 1M)
+          $(make_tmp_fs 1M)
+          $(make_tmp_fs 1M)
+          $(make_tmp_fs 1M)
+          $(make_tmp_fs 1M)
+          $(make_tmp_fs 1M)
+         )
+
+    invoke_lrs
+
+    $phobos dir add ${DIRS[@]}
+    $phobos dir format --unlock ${DIRS[@]}
+}
+
 function cleanup
 {
     waive_lrs
+
+    cleanup_test_dirs
+    drop_tables
+}
+
+function cleanup_raid1_split_rebuild
+{
+    waive_lrs
+
+    for dir in ${DIRS[@]}; do
+        cleanup_tmp_fs "$dir"
+    done
 
     cleanup_test_dirs
     drop_tables
@@ -110,6 +148,14 @@ function copy_extent_count
     $phobos extent list -o ext_count -c "$copy" "$oid"
 }
 
+function copy_expected_extent_count
+{
+    local nb_split=$1
+    local repl_count=$2
+
+    echo $((nb_split * repl_count))
+}
+
 function stat_should_be
 {
     local media=$1
@@ -139,7 +185,8 @@ function dump_extent_list
         jq -S '.[0] | del(.media_name, .address, .ext_uuid, .creation_time)'
 }
 
-function contains() {
+function contains()
+{
     local needle="$1"
     shift
 
@@ -177,7 +224,8 @@ function test_copy_rebuild_complete_incomplete
 function test_copy_rebuild_raid1_impl
 {
     local repl_count=$1
-    shift 1
+    local nb_split=$2
+    shift 2
     local lost_idxs=("$@")
 
     $phobos put -f dir -l raid1 --lyt-params repl_count=$repl_count \
@@ -186,12 +234,12 @@ function test_copy_rebuild_raid1_impl
     local initial_addresses=($(get_extent_info oid source address))
     local initial_media=($(get_extent_info oid source media_name))
     local old_extent_list=$(dump_extent_list oid source)
-    local file_size=$(stat -c %s "$INPUT_FILE")
     local surviving_extents=()
     local surviving_media=()
     local media_to_delete=()
     local deleted_extents=()
     local deleted_xattrs=()
+    local deleted_sizes=()
 
     # Retrieve media and extents to delete
     for lost_idx in ${lost_idxs[@]}; do
@@ -201,19 +249,38 @@ function test_copy_rebuild_raid1_impl
         media_to_delete+=("$deleted_medium")
         deleted_extents+=("$deleted_extent")
         deleted_xattrs+=("$(extent_xattrs "$deleted_extent")")
+        deleted_sizes+=("$($phobos dir list -o "stats.logc_spc_used" \
+                            "$deleted_medium")")
     done
 
-    # Retrieve surviving media and extents
-    for idx in $(seq 0 $((${#initial_media[@]} - 1))); do
-        # Skip deleted medium
-        if contains $idx ${lost_idxs[@]}; then
-            continue
-        else
-            local surviving_medium="${initial_media[$idx]}"
+    # Retrieving the media not deleted for each split
+    # For each extent we are deleting, we retrieve it's split and get all the
+    # media not deleted
+    local i=0
+    while (( $i < ${#lost_idxs[@]} )); do
+        local idx=${lost_idxs[$i]}
+        local current_split=$(( idx / $repl_count))
+        local first_idx_split=$((current_split * repl_count))
+        local first_next_idx_split=$(( (current_split + 1) * repl_count))
 
-            surviving_media+=("$surviving_medium")
-            surviving_extents+=("$surviving_medium/${initial_addresses[$idx]}")
-        fi
+        for j in $(seq $first_idx_split $(( $first_next_idx_split - 1))); do
+            if contains "$j" "${lost_idxs[@]}"; then
+                continue
+            else
+                local surviving_medium="${initial_media[$j]}"
+
+                # Skip medium already in surviving media. Only if we have
+                # deleted more than one extent in a split
+                if contains "$surviving_medium" "${surviving_media[@]}"; then
+                    continue
+                fi
+
+                surviving_media+=("$surviving_medium")
+                surviving_extents+=("$surviving_medium/${initial_addresses[$j]}")
+            fi
+        done
+
+        i=$(( i + 1))
     done
 
     waive_lrs
@@ -228,15 +295,16 @@ function test_copy_rebuild_raid1_impl
     copy_status_should_be oid source complete
 
     local extent_count=$(copy_extent_count oid source)
-    if (( extent_count != repl_count )); then
-        error "There should be $repl_count extents after rebuild," \
+    local expected_count=$(copy_expected_extent_count $nb_split $repl_count)
+    if (( extent_count != expected_count )); then
+        error "There should be $expected_count extents after rebuild," \
               "got $extent_count"
     fi
 
     local rebuilt_media=($(get_extent_info oid source media_name))
     local rebuilt_addresses=($(get_extent_info oid source address))
 
-    for idx in $(seq 0 $((${#lost_idxs[@]} - 1))); do
+    for i in $(seq 0 $((${#lost_idxs[@]} - 1))); do
         local idx=${lost_idxs[$i]}
         local rebuilt_extent="${rebuilt_media[$idx]}/${rebuilt_addresses[$idx]}"
 
@@ -264,22 +332,24 @@ function test_copy_rebuild_raid1_impl
     diff -q "$INPUT_FILE" "$DIR_TEST_OUT/out" ||
         error "Get output should match the original object"
 
-    for idx in ${lost_idxs[@]}; do
+    for i in $(seq 0 $((${#lost_idxs[@]} - 1))); do
+        local idx=${lost_idxs[$i]}
         local rebuilt_medium="${rebuilt_media[$idx]}"
+        local extent_size="${deleted_sizes[$i]}"
 
         stat_should_be "$rebuilt_medium" stats.nb_obj 1
-        stat_should_be "$rebuilt_medium" stats.logc_spc_used "$file_size"
+        stat_should_be "$rebuilt_medium" stats.logc_spc_used "$extent_size"
     done
 }
 
 function test_copy_rebuild_raid1_2_replica
 {
-    test_copy_rebuild_raid1_impl 2 0
+    test_copy_rebuild_raid1_impl 2 1 0
 }
 
 function test_copy_rebuild_raid1_3_replica
 {
-    test_copy_rebuild_raid1_impl 3 0 1
+    test_copy_rebuild_raid1_impl 3 1 0 1
 }
 
 function test_copy_rebuild_raid1_avoid_medium
@@ -305,7 +375,63 @@ function test_copy_rebuild_raid1_avoid_medium
     return 0
 }
 
+function test_copy_rebuild_raid1_split_first_missing
+{
+    test_copy_rebuild_raid1_impl 2 3 0
+}
+
+function test_copy_rebuild_raid1_split_second_missing
+{
+    test_copy_rebuild_raid1_impl 2 3 2
+}
+
+function test_copy_rebuild_raid1_split_third_missing
+{
+    test_copy_rebuild_raid1_impl 2 3 4
+}
+
+function test_copy_rebuild_raid1_split_first_second_missing
+{
+    test_copy_rebuild_raid1_impl 2 3 0 2
+}
+
+function test_copy_rebuild_raid1_split_first_third_missing
+{
+    test_copy_rebuild_raid1_impl 2 3 0 4
+}
+
+function test_copy_rebuild_raid1_split_second_third_missing
+{
+    test_copy_rebuild_raid1_impl 2 3 2 4
+}
+
+function test_copy_rebuild_raid1_split_all_missing
+{
+    test_copy_rebuild_raid1_impl 2 3 0 2 4
+}
+
 TESTS=("setup; test_copy_rebuild_complete_incomplete; cleanup"
        "setup; test_copy_rebuild_raid1_2_replica; cleanup"
        "setup; test_copy_rebuild_raid1_3_replica; cleanup"
+       "setup_raid1_split_rebuild; \
+            test_copy_rebuild_raid1_split_first_missing; \
+        cleanup_raid1_split_rebuild"
+       "setup_raid1_split_rebuild; \
+            test_copy_rebuild_raid1_split_second_missing; \
+        cleanup_raid1_split_rebuild"
+       "setup_raid1_split_rebuild; \
+            test_copy_rebuild_raid1_split_third_missing; \
+        cleanup_raid1_split_rebuild"
+       "setup_raid1_split_rebuild; \
+            test_copy_rebuild_raid1_split_first_second_missing; \
+        cleanup_raid1_split_rebuild"
+       "setup_raid1_split_rebuild; \
+            test_copy_rebuild_raid1_split_first_third_missing; \
+        cleanup_raid1_split_rebuild"
+       "setup_raid1_split_rebuild; \
+            test_copy_rebuild_raid1_split_second_third_missing; \
+        cleanup_raid1_split_rebuild"
+       "setup_raid1_split_rebuild; \
+            test_copy_rebuild_raid1_split_all_missing; \
+        cleanup_raid1_split_rebuild"
        "setup_avoid; test_copy_rebuild_raid1_avoid_medium; cleanup")

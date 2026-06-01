@@ -1149,11 +1149,69 @@ static int raid_reader_split_fini(struct pho_data_processor *proc)
     return 0;
 }
 
+static size_t raid_seek_next_missing_split(struct pho_data_processor *proc,
+                                           enum processor_type type,
+                                           bool update_offset)
+{
+    struct raid_io_context *io_context =
+        io_context_from_proc(proc, proc->current_target, type);
+    size_t n_extents_per_split = n_total_extents(io_context);
+    struct layout_info *layout = proc->src_layout;
+    size_t max_layout_idx;
+    int i;
+
+    ENTRY;
+
+    max_layout_idx = layout->extents[layout->ext_count - 1].layout_idx;
+
+    while (io_context->current_split * n_extents_per_split <= max_layout_idx) {
+        size_t first_layout_idx =
+            io_context->current_split * n_extents_per_split;
+
+        size_t n_extents =
+            current_split_src_layout_n_extent(proc, type);
+        if (n_extents == n_extents_per_split) {
+            io_context->current_split++;
+            continue;
+        }
+
+        if (type == PHO_PROC_ENCODER)
+            io_context->rebuild.current_split_missing_count =
+                n_extents_per_split - n_extents;
+
+        /* Get offset and size of the first extent of this split */
+        for (i = 0; i < layout->ext_count; i++) {
+            struct extent *extent = &layout->extents[i];
+
+            if (extent->layout_idx < first_layout_idx)
+                continue;
+
+            io_context->current_split_offset = extent->offset;
+
+            if (type == PHO_PROC_ENCODER) {
+                if (update_offset)
+                    proc->writer_offset = extent->offset;
+                io_context->rebuild.current_split_extent_size = extent->size;
+            } else if (type == PHO_PROC_DECODER) {
+                if (update_offset) {
+                    proc->reader_offset = extent->offset;
+                    proc->buffer_offset = extent->offset;
+                }
+            }
+
+            return true;
+        }
+    }
+
+    return false;
+}
+
 int raid_reader_processor_step(struct pho_data_processor *proc,
                                pho_resp_t *resp, pho_req_t **reqs,
                                size_t *n_reqs)
 {
     struct raid_io_context *io_context = proc->private_reader;
+    bool has_next_split_to_read = true;
     bool stop_io = false;
     bool need_new_alloc;
     bool need_release;
@@ -1174,6 +1232,13 @@ int raid_reader_processor_step(struct pho_data_processor *proc,
 
     /* first init step from the data processor: return first allocation */
     if (!resp && !proc->buff.size) {
+        /* If the reader is used in a rebuilder proc, we need to get the
+         * first split with missing extents before allocation media.
+         */
+        if (is_rebuilder(proc) &&
+            !raid_seek_next_missing_split(proc, PHO_PROC_DECODER, true))
+            return 0;
+
         *reqs = xcalloc(1, sizeof(**reqs));
         *n_reqs = 1;
         raid_reader_eraser_build_allocation_req(proc, *reqs, PHO_PROC_DECODER);
@@ -1183,6 +1248,12 @@ int raid_reader_processor_step(struct pho_data_processor *proc,
 
     /* manage received allocation */
     if (resp) {
+        if (is_rebuilder(proc) &&
+            proc->reader_offset < io_context->current_split_offset) {
+            proc->reader_offset = io_context->current_split_offset;
+            proc->buffer_offset = io_context->current_split_offset;
+        }
+
         proc->need_alloc_response_to_read = false;
         rc = raid_reader_split_setup(proc, resp);
         if (rc)
@@ -1212,8 +1283,12 @@ int raid_reader_processor_step(struct pho_data_processor *proc,
         proc->xfer->xd_targets[proc->current_target].xt_rc = rc;
 
 release:
+    if (!rc && split_ended && is_rebuilder(proc))
+        has_next_split_to_read = raid_seek_next_missing_split(proc,
+                                                              PHO_PROC_DECODER,
+                                                              false);
     need_release = rc || split_ended;
-    need_new_alloc = !rc && split_ended &&
+    need_new_alloc = !rc && split_ended && has_next_split_to_read &&
                      proc->reader_offset < proc->object_size;
     if (need_release) {
         if (need_new_alloc)
@@ -2042,7 +2117,11 @@ static void raid_rebuilder_split_close(struct pho_data_processor *proc, int *rc)
 
     common_writer_rebuilder_split_close(proc, &object_md, rc);
 
-    io_context->rebuild.current_split_missing_count = 0;
+    /* next split */
+    if (!*rc) {
+        io_context->current_split++;
+        io_context->rebuild.current_split_missing_count = 0;
+    }
 }
 
 static int raid_rebuilder_handle_release_resp(struct pho_data_processor *proc,
@@ -2067,51 +2146,6 @@ static int raid_rebuilder_handle_release_resp(struct pho_data_processor *proc,
     return rc;
 }
 
-static size_t raid_rebuilder_seek_next_missing_split(
-                                        struct pho_data_processor *proc)
-{
-    struct raid_io_context *io_context = proc->private_writer;
-    size_t n_extents_per_split = n_total_extents(io_context);
-    struct layout_info *layout = proc->src_layout;
-    size_t max_layout_idx;
-    int i;
-
-    ENTRY;
-
-    max_layout_idx = layout->extents[layout->ext_count - 1].layout_idx;
-
-    while (io_context->current_split * n_extents_per_split <= max_layout_idx) {
-        size_t first_layout_idx =
-            io_context->current_split * n_extents_per_split;
-
-        size_t n_extents =
-            current_split_src_layout_n_extent(proc, PHO_PROC_ENCODER);
-        if (n_extents == n_extents_per_split) {
-            io_context->current_split++;
-            continue;
-        }
-
-        io_context->rebuild.current_split_missing_count =
-            n_extents_per_split - n_extents;
-
-        /* Get offset and size of the first extent of this split */
-        for (i = 0; i < layout->ext_count; i++) {
-            struct extent *extent = &layout->extents[i];
-
-            if (extent->layout_idx < first_layout_idx)
-                continue;
-
-            io_context->current_split_offset = extent->offset;
-            proc->writer_offset = extent->offset;
-            io_context->rebuild.current_split_extent_size = extent->size;
-
-            return true;
-        }
-    }
-
-    return false;
-}
-
 int raid_rebuilder_processor_step(struct pho_data_processor *proc,
                                   pho_resp_t *resp, pho_req_t **reqs,
                                   size_t *n_reqs)
@@ -2127,7 +2161,7 @@ int raid_rebuilder_processor_step(struct pho_data_processor *proc,
 
     /* First init step from the data processor: return first allocation */
     if (!resp && !proc->buff.size) {
-        if (!raid_rebuilder_seek_next_missing_split(proc)) {
+        if (!raid_seek_next_missing_split(proc, PHO_PROC_ENCODER, true)) {
             proc->done = true;
             return 0;
         }
@@ -2161,6 +2195,7 @@ int raid_rebuilder_processor_step(struct pho_data_processor *proc,
         if (rc)
             goto set_target_rc;
 
+        proc->need_alloc_response_to_write = false;
         rc = raid_rebuilder_split_setup(proc);
         if (rc)
             goto check_for_release;
@@ -2192,7 +2227,8 @@ int raid_rebuilder_processor_step(struct pho_data_processor *proc,
 check_for_release:
     need_full_release = rc || split_ended;
     need_new_alloc = !rc && split_ended &&
-                     raid_rebuilder_seek_next_missing_split(proc);
+                     raid_seek_next_missing_split(proc, PHO_PROC_ENCODER,
+                                                  true);
 
     if (need_full_release)
         complete_and_transfer_release(proc, rc, reqs, n_reqs, stop_io);
@@ -2201,6 +2237,7 @@ check_for_release:
         raid_writer_rebuilder_build_allocation_req(proc, *reqs + *n_reqs,
                                 io_context->rebuild.current_split_extent_size);
         (*n_reqs)++;
+        proc->need_alloc_response_to_write = true;
     }
 
 set_target_rc:
