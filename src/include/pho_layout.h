@@ -381,7 +381,7 @@ int layout_get_specific_attrs(struct pho_io_descr *iod,
                               struct layout_info *layout);
 
 /**
- * Updates the status of the object according to its detected extents
+ * Updates the status of the copy according to its detected extents
  *
  * @param[in]   lyt     The layout containing the extents.
  * @param[out]  copy    The copy to update.

@@ -543,9 +543,9 @@ struct media_info {
  */
 enum copy_status {
     PHO_COPY_STATUS_INVAL = -1,
-    PHO_COPY_STATUS_INCOMPLETE = 0,  /**< Copy has not enough splits */
-    PHO_COPY_STATUS_READABLE,        /**< Enough splits to reconstruct a copy */
-    PHO_COPY_STATUS_COMPLETE,        /**< All copies */
+    PHO_COPY_STATUS_INCOMPLETE = 0, /**< Copy has not enough splits */
+    PHO_COPY_STATUS_READABLE = 1,   /**< Enough splits to reconstruct a copy */
+    PHO_COPY_STATUS_COMPLETE = 2,   /**< All copies */
     PHO_COPY_STATUS_LAST
 };
 
