@@ -557,6 +557,28 @@ function test_copy_deleted_dir_incomplete() {
     ext_count="$($phobos extent list --degroup -o address | wc -l)"
     ((ext_count == 3)) ||
         error "Delay should protect the extents of the incomplete copy"
+
+    # dry run
+    $valg_phobos copy delete --all-incomplete-dry-run ||
+        error "Dry-run deleting incomplete copy should success"
+
+    copy_count="$($phobos copy list -c copy | wc -l)"
+    ((copy_count == 1)) ||
+        error "Dry-run should protect incomplete copy"
+    ext_count="$($phobos extent list --degroup -o address | wc -l)"
+    ((ext_count == 3)) ||
+        error "Dry-run delay should protect the extents of the incomplete copy"
+
+    # final deletion
+    $valg_phobos copy delete --all-incomplete ||
+        error "Deleting incomplete copy should success"
+
+    copy_count="$($phobos copy list -c copy | wc -l)"
+    ((copy_count == 0)) ||
+        error "Incomplete copy should be finally deleted"
+    ext_count="$($phobos extent list --degroup -o address | wc -l)"
+    ((ext_count == 1)) ||
+        error "The extents of the incomplete copy should be finally deleted"
 }
 
 TESTS=("setup_dir; test_copy_deleted_dir_incomplete; cleanup_dir"

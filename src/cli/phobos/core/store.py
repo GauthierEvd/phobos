@@ -853,8 +853,8 @@ class UtilClient:
                                    f"'{del_params.copy_name}'")
 
     @staticmethod
-    def delete_incomplete_copy():
+    def delete_incomplete_copy(dry_run):
         """Delete incomplete copie"""
-        rc = LIBPHOBOS.phobos_delete_incomplete_copy()
+        rc = LIBPHOBOS.phobos_delete_incomplete_copy(dry_run)
         if rc:
             raise EnvironmentError(rc, "Failed to delete incomplete copies")

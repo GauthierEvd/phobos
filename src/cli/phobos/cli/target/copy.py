@@ -64,10 +64,20 @@ class CopyDeleteOptHandler(DeleteOptHandler):
         parser.add_argument('copy', nargs='?',
                             help="copy name, mandatory unless "
                                  "--all-incomplete is set")
-        parser.add_argument("--all-incomplete", action="store_true",
-                            help="Delete all incomplete copies that could be "
-                                 "located on this node. If set, all other "
-                                 "options are ignored.")
+        all_incomplete_group = parser.add_mutually_exclusive_group()
+        all_incomplete_group.add_argument("--all-incomplete",
+                                          action="store_true",
+                                          help="Delete all incomplete copies "
+                                               "that could be located on this "
+                                               "node. If set, all other "
+                                               "options are ignored.")
+        all_incomplete_group.add_argument("--all-incomplete-dry-run",
+                                          action="store_true",
+                                          help="Logs delete actions of all "
+                                               "incomplete copies that could "
+                                               "be located on this node. No "
+                                               "delete is done. If set, all "
+                                               "other options are ignored.")
 
 class CopyListOptHandler(ListOptHandler):
     """Option handler for list action of copy target"""
@@ -133,11 +143,12 @@ class CopyOptHandler(XferOptHandler):
         self.logger.info("Object '%s' successfully copied as '%s'", oid,
                          copy_to_put)
 
-    def delete_incomplete(self):
+    def delete_incomplete(self, dry_run):
         """Incomplete copies deletion"""
         client = UtilClient()
+
         try:
-            client.delete_incomplete_copy()
+            client.delete_incomplete_copy(dry_run)
         except EnvironmentError as err:
             self.logger.error(env_error_format(err))
             sys.exit(abs(err.errno))
@@ -145,7 +156,10 @@ class CopyOptHandler(XferOptHandler):
     def exec_delete(self):
         """Copy deletion"""
         if self.params.get('all_incomplete'):
-            return self.delete_incomplete()
+            return self.delete_incomplete(False)
+
+        if self.params.get('all_incomplete_dry_run'):
+            return self.delete_incomplete(True)
 
         client = UtilClient()
 

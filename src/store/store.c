@@ -2125,7 +2125,8 @@ clean:
 
 static int delete_one_incomplete_copy(struct dss_handle *dss,
                                       const char *hostname,
-                                      struct copy_info *incomplete_copy)
+                                      struct copy_info *incomplete_copy,
+                                      bool dry_run)
 {
     struct dss_filter copy_uuid_version_filter;
     struct copy_info *same_object_copy_list;
@@ -2224,6 +2225,17 @@ static int delete_one_incomplete_copy(struct dss_handle *dss,
 
         if (!target.xt_objid) {
             /* no layout, no object, we only delete the copy */
+            if (dry_run) {
+                pho_info("dry-run: should delete the incomplete copy '%s', "
+                         "object '%s', version '%d', with no layout and no "
+                         "object",
+                         incomplete_copy->copy_name,
+                         incomplete_copy->object_uuid,
+                         incomplete_copy->version);
+
+                goto clean_layout;
+            }
+
             rc = dss_copy_delete(dss, incomplete_copy, 1);
             if (rc) {
                 incomplete_copy_error(rc, incomplete_copy,
@@ -2244,6 +2256,23 @@ static int delete_one_incomplete_copy(struct dss_handle *dss,
     }
 
     /* hard delete the copy/object */
+    if (dry_run) {
+        if (same_object_copy_count > 1)
+            pho_info("dry-run: should hard delete the object '%s', "
+                     "version '%d' and its only copy '%s'",
+                     incomplete_copy->object_uuid,
+                     incomplete_copy->version,
+                     incomplete_copy->copy_name);
+        else
+            pho_info("dry-run: should delete the incomplete copy '%s', "
+                     "object '%s', version '%d'",
+                     incomplete_copy->copy_name,
+                     incomplete_copy->object_uuid,
+                     incomplete_copy->version);
+
+        goto clean_layout;
+    }
+
     xfer.xd_op = PHO_XFER_OP_DEL;
     copy_name = strdup(incomplete_copy->copy_name);
     xfer.xd_params.delete.copy_name = copy_name;
@@ -2313,7 +2342,7 @@ static int set_todelete_creation_time_string(
     return 0;
 }
 
-int phobos_delete_incomplete_copy(void)
+int phobos_delete_incomplete_copy(bool dry_run)
 {
     char todelete_creation_time_string[PHO_TIMEVAL_MAX_LEN] = "";
     struct copy_info *incomplete_copy_list;
@@ -2361,7 +2390,7 @@ int phobos_delete_incomplete_copy(void)
         int rc2;
 
         rc2 = delete_one_incomplete_copy(&dss, hostname,
-                                         &incomplete_copy_list[i]);
+                                         &incomplete_copy_list[i], dry_run);
         rc = rc ? : rc2;
     }
 

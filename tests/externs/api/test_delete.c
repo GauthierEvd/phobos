@@ -163,17 +163,36 @@ static bool test_delete_incomplete_copy(void)
     bool deleted;
     int rc;
 
-    rc = phobos_delete_incomplete_copy();
+    /* dry-run */
+    rc = phobos_delete_incomplete_copy(true);
     if (rc)
         return false;
 
-    /* check the copies and the objects are deleted */
     rc = dss_init(&dss);
     if (rc) {
         pho_error(rc, "Unable to init dss to check copies");
         return false;
     }
 
+    rc = check_copy_deleted(&dss, "1_incomplete_copy",
+                            "00112233445566778899aabbccddeef4", "source",
+                            &deleted);
+    if (rc || deleted) {
+        if (rc)
+            pho_error(rc,
+                      "Unable to checked the deleted copy 1_incomplete_copy");
+        else
+            pho_warn("1_incomplete_copy copy should not be deleted by dry run");
+
+        dss_fini(&dss);
+        return false;
+    }
+
+    rc = phobos_delete_incomplete_copy(false);
+    if (rc)
+        return false;
+
+    /* check the copies and the objects are deleted */
     rc = check_copy_deleted(&dss, "1_incomplete_copy",
                             "00112233445566778899aabbccddeef4", "source",
                             &deleted);
