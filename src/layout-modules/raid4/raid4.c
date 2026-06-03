@@ -33,6 +33,7 @@
 #include <errno.h>
 #include <glib.h>
 #include <string.h>
+#include <stdlib.h>
 #include <unistd.h>
 
 #define PLUGIN_NAME     "raid4"
@@ -94,6 +95,11 @@ static const struct pho_proc_ops RAID4_READER_PROCESSOR_OPS = {
 static const struct pho_proc_ops RAID4_ERASER_PROCESSOR_OPS = {
     .step       = raid_eraser_processor_step,
     .destroy    = raid_eraser_processor_destroy,
+};
+
+static const struct pho_proc_ops RAID4_REBUILDER_PROCESSOR_OPS = {
+    .step       = raid_rebuilder_processor_step,
+    .destroy    = raid_writer_rebuilder_processor_destroy,
 };
 
 /**
@@ -251,6 +257,47 @@ static int layout_raid4_erase(struct pho_data_processor *eraser)
     return rc;
 }
 
+static int layout_raid4_rebuild(struct pho_data_processor *rebuilder)
+{
+    struct raid_io_context *io_context;
+    int rc;
+
+    ENTRY;
+
+    io_context = xcalloc(1, sizeof(*io_context));
+    rebuilder->private_writer = io_context;
+    io_context->name = PLUGIN_NAME;
+    io_context->n_data_extents = 2;
+    io_context->n_parity_extents = 1;
+    io_context->rebuild.missing_extents_remaining =
+        raid_get_nb_extent_to_rebuild(rebuilder);
+
+    rc = raid4_get_reader_chunk_size(rebuilder,
+                                     &io_context->current_split_chunk_size);
+    if (rc)
+        return rc;
+
+    io_context->nb_hashes = 1;
+    io_context->hashes = xcalloc(io_context->nb_hashes,
+                                 sizeof(*io_context->hashes));
+    rc = extent_hash_init(io_context->hashes,
+                          PHO_CFG_GET_BOOL(raid4_cfg_items, PHO_CFG_LYT_RAID4,
+                                           extent_md5, false),
+                          PHO_CFG_GET_BOOL(raid4_cfg_items, PHO_CFG_LYT_RAID4,
+                                           extent_xxh128, false));
+    if (rc)
+        goto out_hash;
+
+    return raid_rebuilder_init(rebuilder, &RAID4_MODULE_DESC,
+                               &RAID4_REBUILDER_PROCESSOR_OPS,
+                               &RAID4_OPS);
+
+out_hash:
+    extent_hash_fini(io_context->hashes);
+
+    return rc;
+}
+
 static int layout_raid4_locate(struct dss_handle *dss,
                                struct layout_info *layout,
                                const char *focus_host,
@@ -327,6 +374,7 @@ static const struct pho_layout_module_ops LAYOUT_RAID4_OPS = {
     .encode = layout_raid4_encode,
     .decode = layout_raid4_decode,
     .erase = layout_raid4_erase,
+    .rebuild = layout_raid4_rebuild,
     .locate = layout_raid4_locate,
     .get_specific_attrs = NULL,
     .get_availability = layout_raid4_get_availability,

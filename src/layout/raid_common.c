@@ -74,6 +74,31 @@ static struct pho_xfer_put_params *get_put_params(
         return &proc->xfer->xd_params.put;
 }
 
+static size_t raid_get_nb_split(struct pho_data_processor *rebuilder)
+{
+    struct raid_io_context *io_context = rebuilder->private_reader;
+    struct layout_info *layout = rebuilder->src_layout;
+    size_t nb_extent_per_split;
+    size_t last_lyt_index;
+
+    nb_extent_per_split = n_total_extents(io_context);
+    last_lyt_index = layout->extents[layout->ext_count - 1].layout_idx;
+
+    return (last_lyt_index / nb_extent_per_split) + 1;
+}
+
+int raid_get_nb_extent_to_rebuild(struct pho_data_processor *rebuilder)
+{
+    struct raid_io_context *io_context = rebuilder->private_reader;
+    struct layout_info *layout = rebuilder->src_layout;
+    int nb_split = raid_get_nb_split(rebuilder);
+    int nb_extent_per_split;
+
+    nb_extent_per_split = n_total_extents(io_context);
+
+    return (nb_split * nb_extent_per_split) - layout->ext_count;
+}
+
 static void free_extent_address_buff(void *void_extent)
 {
     struct extent *extent = void_extent;

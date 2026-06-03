@@ -260,4 +260,6 @@ int get_object_size_from_layout(struct layout_info *layout);
 size_t get_n_extents(struct raid_io_context *io_context,
                      enum processor_type type);
 
+int raid_get_nb_extent_to_rebuild(struct pho_data_processor *rebuilder);
+
 #endif
