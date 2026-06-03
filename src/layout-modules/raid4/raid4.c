@@ -79,6 +79,7 @@ static struct raid_ops RAID4_OPS = {
     .get_reader_chunk_size = raid4_get_reader_chunk_size,
     .read_into_buff = raid4_read_into_buff,
     .write_from_buff = raid4_write_from_buff,
+    .rebuild_from_buff = raid4_rebuild_from_buff,
     .set_extra_attrs = raid4_extra_attrs,
 };
 

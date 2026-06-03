@@ -47,12 +47,13 @@ static int set_extent_extra_attrs(struct extent *extent,
     return 0;
 }
 
-static int set_raid4_md(struct raid_io_context *io_context, size_t chunk_size)
+static int set_raid4_md(struct raid_io_context *io_context, size_t chunk_size,
+                        enum processor_type type)
 {
-    struct extent *extents = io_context->write.output.extents;
-    size_t n_extents = io_context->n_data_extents +
-        io_context->n_parity_extents;
+    struct output_io_context *output = raid_output_io_context(io_context, type);
+    size_t n_extents = get_n_extents(io_context, type);
     struct pho_io_descr *iods = io_context->iods;
+    struct extent *extents = output->extents;
     int rc = 0;
     size_t i;
     int rc2;
@@ -70,7 +71,143 @@ int raid4_extra_attrs(struct pho_data_processor *proc)
     struct raid_io_context *io_context =
         &((struct raid_io_context *)proc->private_writer)[proc->current_target];
 
-    return set_raid4_md(io_context, io_context->current_split_chunk_size);
+    return set_raid4_md(io_context, io_context->current_split_chunk_size,
+                        proc->type);
+}
+
+static bool raid4_should_write_extent(size_t *extent_to_write,
+                                      size_t extent_idx)
+{
+    return extent_to_write == NULL || *extent_to_write == extent_idx;
+}
+
+static size_t raid4_iod_idx(struct pho_data_processor *proc, int extent_idx)
+{
+    return is_rebuilder(proc) ? 0 : extent_idx;
+}
+
+static int raid4_write_extent_from_buff(struct pho_data_processor *proc,
+                                        int extent_idx, size_t to_write,
+                                        off_t buff_offset, char *hash_buff)
+{
+    struct raid_io_context *io_context =
+        &((struct raid_io_context *)proc->private_writer)[proc->current_target];
+    size_t iod_idx = raid4_iod_idx(proc, extent_idx);
+    struct pho_io_descr *iods = io_context->iods;
+    int rc;
+
+    rc = data_processor_write_from_buff(proc, &iods[iod_idx], to_write,
+                                        buff_offset);
+    if (rc)
+        LOG_RETURN(rc,
+                   "raid4 unable to write %zu bytes in extent %d at "
+                   "offset %zu", to_write, extent_idx, proc->writer_offset);
+
+    iods[iod_idx].iod_size += to_write;
+
+    return extent_hash_update(&io_context->hashes[iod_idx], hash_buff,
+                              to_write);
+}
+
+static int raid4_write_stripes_from_buff(struct pho_data_processor *proc,
+                                         size_t to_write, size_t extent_0_size,
+                                         size_t extent_1_size,
+                                         size_t *extent_to_write)
+{
+    struct raid_io_context *io_context =
+        &((struct raid_io_context *)proc->private_writer)[proc->current_target];
+    size_t extent_0_iod_idx = raid4_iod_idx(proc, 0);
+    size_t extent_1_iod_idx = raid4_iod_idx(proc, 1);
+    struct pho_io_descr *iods = io_context->iods;
+    int rc;
+
+    while (to_write) {
+        char *buff_start = proc->buff.buff +
+                           (proc->writer_offset - proc->buffer_offset);
+        size_t to_write_extent_0;
+        size_t to_write_extent_1;
+        size_t written_size;
+
+        to_write_extent_0 = min(to_write,
+                                extent_0_size -
+                                    iods[extent_0_iod_idx].iod_size);
+        to_write_extent_0 = min(to_write_extent_0,
+                                io_context->current_split_chunk_size);
+
+        to_write_extent_1 = min(to_write - to_write_extent_0,
+                                extent_1_size -
+                                    iods[extent_1_iod_idx].iod_size);
+        to_write_extent_1 = min(to_write_extent_1,
+                                io_context->current_split_chunk_size);
+
+        written_size = to_write_extent_0 + to_write_extent_1;
+
+        if (raid4_should_write_extent(extent_to_write, 0)) {
+            rc = raid4_write_extent_from_buff(proc, 0, to_write_extent_0, 0,
+                                              buff_start);
+            if (rc)
+                return rc;
+        }
+
+        if (raid4_should_write_extent(extent_to_write, 1)) {
+            rc = raid4_write_extent_from_buff(proc, 1, to_write_extent_1,
+                                              to_write_extent_0,
+                                              buff_start + to_write_extent_0);
+            if (rc)
+                return rc;
+        }
+
+        if (raid4_should_write_extent(extent_to_write, 2)) {
+            /*
+             * fill parity bytes in buffer
+             *
+             * If needed, we reach the end of the input object, there is no data
+             * after the ones we already write from the buffer. We can add
+             * zeros at the end without overwriting effective input bytes.
+             * We have enbough place in the buffer to set additional zeros
+             * because the buffer size is the lcm of our stripe size.
+             */
+            if (to_write_extent_1 < to_write_extent_0)
+                memset(buff_start + to_write_extent_0 + to_write_extent_1, 0,
+                       to_write_extent_0 - to_write_extent_1);
+
+            /* compute in place the parity extent */
+            xor_in_place(buff_start, buff_start + to_write_extent_0,
+                         to_write_extent_0);
+
+            rc = raid4_write_extent_from_buff(proc, 2, to_write_extent_0,
+                                              to_write_extent_0,
+                                              buff_start + to_write_extent_0);
+            if (rc)
+                return rc;
+        }
+
+        proc->writer_offset += written_size;
+        to_write -= written_size;
+    }
+
+    if (proc->writer_offset == proc->reader_offset)
+        proc->buffer_offset = proc->writer_offset;
+
+    return 0;
+}
+
+int raid4_rebuild_from_buff(struct pho_data_processor *proc)
+{
+    struct raid_io_context *io_context = proc->private_writer;
+    size_t extent_to_write;
+    size_t extent_1_size;
+    size_t extent_0_size;
+    size_t to_write;
+
+    extent_to_write = io_context->rebuild.output.extents[0].layout_idx % 3;
+    extent_1_size = io_context->rebuild.current_split_extent_size;
+    extent_0_size = extent_1_size + io_context->rebuild.extent_remainder;
+
+    to_write = proc->reader_offset - proc->writer_offset;
+
+    return raid4_write_stripes_from_buff(proc, to_write, extent_0_size,
+                                         extent_1_size, &extent_to_write);
 }
 
 int raid4_write_from_buff(struct pho_data_processor *proc)
@@ -79,7 +216,6 @@ int raid4_write_from_buff(struct pho_data_processor *proc)
         &((struct raid_io_context *)proc->private_writer)[proc->current_target];
     size_t inside_split_offset = proc->writer_offset -
                                  io_context->current_split_offset;
-    struct pho_io_descr *iods = io_context->iods;
     size_t to_write;
     int rc;
 
@@ -87,105 +223,15 @@ int raid4_write_from_buff(struct pho_data_processor *proc)
     to_write = min(io_context->current_split_size - inside_split_offset,
                    proc->reader_offset - proc->writer_offset);
 
-    /* write chunk by chunk */
-    while (to_write) {
-        char *buff_start = proc->buff.buff +
-                           (proc->writer_offset - proc->buffer_offset);
-        size_t to_write_extent_0;
-        size_t to_write_extent_1;
+    rc = raid4_write_stripes_from_buff(proc, to_write,
+                                       io_context->write.output.extents[0].size,
+                                       io_context->write.output.extents[1].size,
+                                       NULL);
+    if (rc)
+        return rc;
 
-        /* limit: extent -> chunk */
-        to_write_extent_0 = min(to_write,
-                                io_context->write.output.extents[0].size -
-                                    iods[0].iod_size);
-        to_write_extent_0 = min(to_write_extent_0,
-                                io_context->current_split_chunk_size);
+    if (proc->writer_offset >= proc->object_size)
+        io_context->write.all_is_written = true;
 
-        /* write the data extent 0 */
-        rc = data_processor_write_from_buff(proc, &iods[0], to_write_extent_0,
-                                            0);
-        if (rc)
-            LOG_RETURN(rc,
-                       "raid4 unable to write %zu bytes in data extent 0 at "
-                       "offset %zu", to_write_extent_0, proc->writer_offset);
-
-        iods[0].iod_size += to_write_extent_0;
-        proc->writer_offset += to_write_extent_0;
-        rc = extent_hash_update(&io_context->hashes[0], buff_start,
-                                to_write_extent_0);
-        if (rc)
-            return rc;
-
-        to_write -= to_write_extent_0;
-
-        /* limit: extent -> chunk */
-        to_write_extent_1 = min(to_write,
-                                io_context->write.output.extents[1].size -
-                                    iods[1].iod_size);
-        to_write_extent_1 = min(to_write_extent_1,
-                                io_context->current_split_chunk_size);
-
-        /* write the data extent 1 */
-        rc = data_processor_write_from_buff(proc, &iods[1], to_write_extent_1,
-                                            0);
-        if (rc)
-            LOG_RETURN(rc,
-                       "raid4 unable to write %zu bytes in data extent 0 at "
-                       "offset %zu", to_write_extent_1, proc->writer_offset);
-
-        iods[1].iod_size += to_write_extent_1;
-        proc->writer_offset += to_write_extent_1;
-        if (proc->writer_offset >= proc->object_size)
-            io_context->write.all_is_written = true;
-
-        rc = extent_hash_update(&io_context->hashes[1],
-                                buff_start + to_write_extent_0,
-                                to_write_extent_1);
-        if (rc)
-            return rc;
-
-        to_write -= to_write_extent_1;
-
-        /*
-         * fill parity bytes in buffer
-         *
-         * If needed, we reach the end of the input object, there is no data
-         * after the ones we already write from the buffer. We can add
-         * zeros at the end without overwriting effective input bytes.
-         * We have enbough place in the buffer to set additional zeros because
-         * the buffer size is the lcm of our stripe size.
-         */
-        if (to_write_extent_1 < to_write_extent_0)
-            memset(buff_start + to_write_extent_0 + to_write_extent_1, 0,
-                   to_write_extent_0 - to_write_extent_1);
-
-        /* compute in place the parity extent */
-        xor_in_place(buff_start, buff_start + to_write_extent_0,
-                     to_write_extent_0);
-
-        /* write the parity extent */
-        rc = data_processor_write_from_buff(
-            proc, &iods[2], to_write_extent_0,
-            /* The XOR is computed inplace at buff_start + to_write_extent_0.
-             * Since we wrote to_write_extent_0 + to_write_extent_1 bytes,
-             * we need to move back to_write_extent_1 bytes to find the XOR.
-             */
-            -to_write_extent_1
-        );
-        if (rc)
-            LOG_RETURN(rc,
-                       "raid4 unable to write %zu bytes in parity extent at "
-                       "offset %zu", to_write_extent_0, proc->writer_offset);
-
-        iods[2].iod_size += to_write_extent_0;
-        rc = extent_hash_update(&io_context->hashes[2],
-                                buff_start + to_write_extent_0,
-                                to_write_extent_0);
-        if (rc)
-            return rc;
-    }
-
-    if (proc->writer_offset == proc->reader_offset)
-        proc->buffer_offset = proc->writer_offset;
     return 0;
 }

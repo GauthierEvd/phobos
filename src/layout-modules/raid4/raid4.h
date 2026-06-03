@@ -6,6 +6,7 @@
 
 int raid4_read_into_buff(struct pho_data_processor *proc);
 int raid4_write_from_buff(struct pho_data_processor *proc);
+int raid4_rebuild_from_buff(struct pho_data_processor *proc);
 int raid4_extra_attrs(struct pho_data_processor *proc);
 
 void buffer_xor(struct pho_buff *buff1, struct pho_buff *buff2,
