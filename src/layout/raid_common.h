@@ -117,6 +117,7 @@ struct rebuild_io_context {
     size_t missing_extents_remaining;
     size_t current_split_missing_count;
     size_t current_split_extent_size;
+    size_t extent_remainder;
 };
 
 struct raid_io_context {

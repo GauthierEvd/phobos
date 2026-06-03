@@ -722,12 +722,19 @@ static void raid_io_context_set_extent_size(struct raid_io_context *io_context,
     extents = output->extents;
 
     for (i = 0; i < n_extents; i++) {
-        if (extent_size_remainder > 0)
-            extents[i].size = extent_size + (i < extent_size_remainder ||
-                                             i >= io_context->n_data_extents ?
-                                             1 : 0);
+        size_t extent_idx;
+
+        if (type == PHO_PROC_REBUILDER)
+            extent_idx = extents[i].layout_idx % n_total_extents(io_context);
         else
-            extents[i].size = extent_size;
+            extent_idx = i;
+
+        extents[i].size = extent_size;
+
+        if (extent_size_remainder > 0 &&
+            (extent_idx < extent_size_remainder ||
+             extent_idx >= io_context->n_data_extents))
+            extents[i].size++;
     }
 }
 
@@ -1204,7 +1211,7 @@ static size_t raid_seek_next_missing_split(struct pho_data_processor *proc,
             io_context->rebuild.current_split_missing_count =
                 n_extents_per_split - n_extents;
 
-        /* Get offset and size of the first extent of this split */
+        /* Get offset of the first extent of this split */
         for (i = 0; i < layout->ext_count; i++) {
             struct extent *extent = &layout->extents[i];
 
@@ -1213,12 +1220,10 @@ static size_t raid_seek_next_missing_split(struct pho_data_processor *proc,
 
             io_context->current_split_offset = extent->offset;
 
-            if (type == PHO_PROC_ENCODER) {
-                if (update_offset)
+            if (update_offset) {
+                if (type == PHO_PROC_ENCODER) {
                     proc->writer_offset = extent->offset;
-                io_context->rebuild.current_split_extent_size = extent->size;
-            } else if (type == PHO_PROC_DECODER) {
-                if (update_offset) {
+                } else if (type == PHO_PROC_DECODER) {
                     proc->reader_offset = extent->offset;
                     proc->buffer_offset = extent->offset;
                 }
@@ -2105,8 +2110,9 @@ static int raid_rebuilder_split_setup(struct pho_data_processor *proc)
         return rc;
 
     raid_io_context_set_extent_size(
-                            io_context, proc->type,
-                            io_context->rebuild.current_split_extent_size, 0);
+                                io_context, proc->type,
+                                io_context->rebuild.current_split_extent_size,
+                                io_context->rebuild.extent_remainder);
 
     proc->writer_stripe_size = io_context->current_split_chunk_size;
 
@@ -2119,9 +2125,6 @@ static int raid_rebuilder_split_setup(struct pho_data_processor *proc)
         if (rc)
             return rc;
     }
-
-    io_context->current_split_size =
-        io_context->rebuild.current_split_extent_size;
 
     return io_context->ops->set_extra_attrs(proc);
 }
@@ -2171,6 +2174,47 @@ static int raid_rebuilder_handle_release_resp(struct pho_data_processor *proc,
     return rc;
 }
 
+static size_t raid_get_current_split_size(struct pho_data_processor *proc)
+{
+    struct raid_io_context *io_context = proc->private_writer;
+    size_t n_extents_per_split = n_total_extents(io_context);
+    struct layout_info *layout = proc->src_layout;
+    size_t next_split_first_layout_idx;
+    size_t remaining;
+    int i;
+
+    next_split_first_layout_idx = (io_context->current_split + 1) *
+                                    n_extents_per_split;
+
+    remaining = proc->object_size - io_context->current_split_offset;
+
+    for (i = 0; i < layout->ext_count; i++) {
+        struct extent *extent = &layout->extents[i];
+
+        if (extent->layout_idx < next_split_first_layout_idx)
+            continue;
+
+        return min(extent->offset - io_context->current_split_offset,
+                   remaining);
+    }
+
+    return remaining;
+}
+
+static void rebuilder_get_extent_size(struct pho_data_processor *proc)
+{
+    struct raid_io_context *io_context = proc->private_writer;
+    size_t extent_size;
+    size_t remainder;
+
+    io_context->current_split_size = raid_get_current_split_size(proc);
+    extent_size = io_context->current_split_size / io_context->n_data_extents;
+    remainder = io_context->current_split_size % io_context->n_data_extents;
+
+    io_context->rebuild.current_split_extent_size = extent_size;
+    io_context->rebuild.extent_remainder = remainder;
+}
+
 int raid_rebuilder_processor_step(struct pho_data_processor *proc,
                                   pho_resp_t *resp, pho_req_t **reqs,
                                   size_t *n_reqs)
@@ -2191,10 +2235,13 @@ int raid_rebuilder_processor_step(struct pho_data_processor *proc,
             return 0;
         }
 
+        rebuilder_get_extent_size(proc);
+
         *reqs = xcalloc(1, sizeof(**reqs));
         *n_reqs = 1;
         raid_writer_rebuilder_build_allocation_req(proc, *reqs,
-                                 io_context->rebuild.current_split_extent_size);
+                                 io_context->rebuild.current_split_extent_size +
+                                 io_context->rebuild.extent_remainder);
 
         goto set_target_rc;
     }
@@ -2240,8 +2287,8 @@ int raid_rebuilder_processor_step(struct pho_data_processor *proc,
 
     rc = io_context->ops->rebuild_from_buff(proc);
 
-    split_ended = (proc->writer_offset - io_context->current_split_offset) ==
-                    io_context->rebuild.current_split_extent_size;
+    split_ended = (proc->writer_offset - io_context->current_split_offset) >=
+                    io_context->current_split_size;
     if (split_ended)
         io_context->rebuild.missing_extents_remaining -=
             io_context->rebuild.current_split_missing_count;
@@ -2259,8 +2306,10 @@ check_for_release:
         complete_and_transfer_release(proc, rc, reqs, n_reqs, stop_io);
 
     if (need_new_alloc) {
+        rebuilder_get_extent_size(proc);
         raid_writer_rebuilder_build_allocation_req(proc, *reqs + *n_reqs,
-                                io_context->rebuild.current_split_extent_size);
+                                io_context->rebuild.current_split_extent_size +
+                                io_context->rebuild.extent_remainder);
         (*n_reqs)++;
         proc->need_alloc_response_to_write = true;
     }
