@@ -21,8 +21,10 @@
 Copy target for Phobos CLI
 """
 
+from argparse import ArgumentTypeError
 import os
 import sys
+from typing import Optional
 
 from phobos.cli.action.create import CreateOptHandler
 from phobos.cli.action.delete import DeleteOptHandler
@@ -79,6 +81,17 @@ class CopyDeleteOptHandler(DeleteOptHandler):
                                                "be located on this node. No "
                                                "delete is done. If set, all "
                                                "other options are ignored.")
+        parser.add_argument('--all-incomplete-delay-second',
+                            type=lambda x: int(x) if int(x) >= 0 else
+                                     ArgumentTypeError(
+                                         "--all-incomplete-delay-second "
+                                         "must be a positive integer"),
+                            help="(only taken into account if --all-incomplete "
+                                 "or --all-incomplete-dry-run option are set) "
+                                 "Delay in second before an incomplete copy "
+                                 "can be cleaned. If not set, the config "
+                                 "\"delete_incomplete_delay_second\" parameter "
+                                 "value is used.")
 
 class CopyListOptHandler(ListOptHandler):
     """Option handler for list action of copy target"""
@@ -158,12 +171,12 @@ class CopyOptHandler(XferOptHandler):
         self.logger.info("Object '%s' successfully copied as '%s'", oid,
                          copy_to_put)
 
-    def delete_incomplete(self, dry_run):
+    def delete_incomplete(self, dry_run, delay_second: Optional[int] = None):
         """Incomplete copies deletion"""
         client = UtilClient()
 
         try:
-            client.delete_incomplete_copy(dry_run)
+            client.delete_incomplete_copy(dry_run, delay_second)
         except EnvironmentError as err:
             self.logger.error(env_error_format(err))
             sys.exit(abs(err.errno))
@@ -171,10 +184,16 @@ class CopyOptHandler(XferOptHandler):
     def exec_delete(self):
         """Copy deletion"""
         if self.params.get('all_incomplete'):
-            return self.delete_incomplete(False)
+            self.delete_incomplete(
+               False,
+               self.params.get('all_incomplete_delay_second'))
+            return
 
         if self.params.get('all_incomplete_dry_run'):
-            return self.delete_incomplete(True)
+            self.delete_incomplete(
+                True,
+                self.params.get('all_incomplete_delay_second'))
+            return
 
         client = UtilClient()
 

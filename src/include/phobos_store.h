@@ -477,12 +477,16 @@ int phobos_delete(struct pho_xfer_desc *xfers, size_t num_xfers);
  * Copies younger than "current_time - delete_incomplete_delay_second" are
  * skipped. "delete_incomplete_delay_second" is a config file parameter.
  *
- * @param[in]   dry_run     If true, only logs actions instead of deleting
- *                          anything.
+ * @param[in]   dry_run         If true, only logs actions instead of deleting
+ *                              anything.
+ * @param[in]   delay_second    Delay in second before an incomplete copy could
+ *                              be cleaned. If NULL, the config
+                                "delete_incomplete_delay_second" parameter value
+                                is used.
  *
  * @return                  0 on success, -errno on failure
  */
-int phobos_delete_incomplete_copy(bool dry_run);
+int phobos_delete_incomplete_copy(bool dry_run, const int * const delay_second);
 
 /**
  * Undelete a deprecated object from the object store

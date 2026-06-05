@@ -22,6 +22,7 @@
 /**
  * \brief Test delete API call
  */
+#include <limits.h>
 #include <stdlib.h>
 
 #ifdef HAVE_CONFIG_H
@@ -159,20 +160,21 @@ static int check_object_deleted(struct dss_handle *dss, const char *oid,
 
 static bool test_delete_incomplete_copy(void)
 {
+    int one_hour_in_second = 3600;
     struct dss_handle dss;
     bool deleted;
     int rc;
-
-    /* dry-run */
-    rc = phobos_delete_incomplete_copy(true);
-    if (rc)
-        return false;
 
     rc = dss_init(&dss);
     if (rc) {
         pho_error(rc, "Unable to init dss to check copies");
         return false;
     }
+
+    /* dry-run */
+    rc = phobos_delete_incomplete_copy(true, NULL);
+    if (rc)
+        return false;
 
     rc = check_copy_deleted(&dss, "1_incomplete_copy",
                             "00112233445566778899aabbccddeef4", "source",
@@ -188,7 +190,27 @@ static bool test_delete_incomplete_copy(void)
         return false;
     }
 
-    rc = phobos_delete_incomplete_copy(false);
+    /* delay */
+    rc = phobos_delete_incomplete_copy(true, &one_hour_in_second);
+    if (rc)
+        return false;
+
+    rc = check_copy_deleted(&dss, "1_incomplete_copy",
+                            "00112233445566778899aabbccddeef4", "source",
+                            &deleted);
+    if (rc || deleted) {
+        if (rc)
+            pho_error(rc,
+                      "Unable to checked the deleted copy 1_incomplete_copy");
+        else
+            pho_warn("1_incomplete_copy copy should not be deleted by delay");
+
+        dss_fini(&dss);
+        return false;
+    }
+
+    /* effective delete */
+    rc = phobos_delete_incomplete_copy(false, NULL);
     if (rc)
         return false;
 

@@ -30,6 +30,7 @@ import os
 from collections import namedtuple
 from ctypes import (byref, c_bool, c_char_p, c_int, c_ssize_t, c_void_p, cast,
                     CFUNCTYPE, pointer, POINTER, py_object, Structure, Union)
+from typing import Optional
 
 from phobos.core.ffi import (LIBPHOBOS, DeprecatedObjectInfo, ObjectInfo,
                              StringArray, CopyInfo)
@@ -865,9 +866,11 @@ class UtilClient:
             Store.xfer_desc_release(xfers)
 
     @staticmethod
-    def delete_incomplete_copy(dry_run):
+    def delete_incomplete_copy(dry_run, delay_second: Optional[int] = None):
         """Delete incomplete copie"""
-        rc = LIBPHOBOS.phobos_delete_incomplete_copy(dry_run)
+        rc = LIBPHOBOS.phobos_delete_incomplete_copy(
+                dry_run,
+                None if delay_second is None else byref(c_int(delay_second)))
         if rc:
             raise EnvironmentError(rc, "Failed to delete incomplete copies")
 

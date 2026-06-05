@@ -2374,30 +2374,34 @@ clean_layout:
 }
 
 static int set_todelete_creation_time_string(
-    char *todelete_creation_time_string)
+    char *todelete_creation_time_string, const int * const delay_second)
 {
     struct timeval todelete_creation_time;
     int delete_incomplete_delay_second;
     int rc;
 
-    delete_incomplete_delay_second =
-        PHO_CFG_GET_INT(cfg_store, PHO_CFG_STORE,
-                        delete_incomplete_delay_second, INT_MIN);
-    if (delete_incomplete_delay_second == INT_MIN)
-        LOG_RETURN(-EINVAL,
-                   "Unable to set the \"delete_incomplete_delay_second\" "
-                   "config value");
-
-    rc = gettimeofday(&todelete_creation_time, NULL);
-    if (rc) {
-        rc = -errno;
-        LOG_RETURN(rc, "Error when getting current time");
+    if (delay_second) {
+        delete_incomplete_delay_second = *delay_second;
+    } else {
+        delete_incomplete_delay_second =
+            PHO_CFG_GET_INT(cfg_store, PHO_CFG_STORE,
+                            delete_incomplete_delay_second, INT_MIN);
+        if (delete_incomplete_delay_second == INT_MIN)
+            LOG_RETURN(-EINVAL,
+                       "Unable to set the \"delete_incomplete_delay_second\" "
+                       "config value");
     }
 
     if (delete_incomplete_delay_second < 0)
         LOG_RETURN(-EINVAL,
                    "delete_incomplete_delay_second config value can not be "
                    "negative, %d", delete_incomplete_delay_second);
+
+    rc = gettimeofday(&todelete_creation_time, NULL);
+    if (rc) {
+        rc = -errno;
+        LOG_RETURN(rc, "Error when getting current time");
+    }
 
     if (delete_incomplete_delay_second > todelete_creation_time.tv_sec)
         LOG_RETURN(-EINVAL,
@@ -2410,7 +2414,7 @@ static int set_todelete_creation_time_string(
     return 0;
 }
 
-int phobos_delete_incomplete_copy(bool dry_run)
+int phobos_delete_incomplete_copy(bool dry_run, const int * const delay_second)
 {
     char todelete_creation_time_string[PHO_TIMEVAL_MAX_LEN] = "";
     struct copy_info *incomplete_copy_list;
@@ -2427,7 +2431,8 @@ int phobos_delete_incomplete_copy(bool dry_run)
         return rc;
 
     /* Compute delay */
-    rc = set_todelete_creation_time_string(todelete_creation_time_string);
+    rc = set_todelete_creation_time_string(todelete_creation_time_string,
+                                           delay_second);
     if (rc)
         return rc;
 

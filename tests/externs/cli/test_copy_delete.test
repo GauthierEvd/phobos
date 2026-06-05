@@ -547,9 +547,9 @@ function test_copy_deleted_dir_incomplete() {
     removed_add_to_media ${obj_media[0]}
     removed_add_to_media ${obj_media[1]}
 
-    PHOBOS_STORE_delete_incomplete_delay_second="3600" \
-        $valg_phobos copy delete --all-incomplete ||
-        error "Deleting incomplete copy with a delay should success"
+    $valg_phobos copy delete --all-incomplete \
+        --all-incomplete-delay-second 3600 ||
+            error "Deleting incomplete copy with a delay should success"
 
     copy_count="$($phobos copy list -c copy | wc -l)"
     ((copy_count == 1)) ||
