@@ -80,6 +80,10 @@ function setup_split_rebuild
     INPUT_FILE="$DIR_TEST_IN/file"
     dd if=/dev/urandom of="$INPUT_FILE" bs=1K count=2049
 
+    if [[ "$1" == "odd" ]]; then
+        echo -n 1 >> "$INPUT_FILE"
+    fi
+
     DIRS=(
           $(make_tmp_fs 1M)
           $(make_tmp_fs 1M)
@@ -517,5 +521,14 @@ TESTS+=("setup; test_copy_rebuild_raid4_first_half; cleanup"
             test_copy_rebuild_raid4_split_all_missing_second_half; \
          cleanup_split_rebuild"
         "setup_split_rebuild; \
+            test_copy_rebuild_raid4_split_all_missing_xor; \
+         cleanup_split_rebuild"
+        "setup_split_rebuild odd; \
+            test_copy_rebuild_raid4_split_all_missing_first_half; \
+         cleanup_split_rebuild"
+        "setup_split_rebuild odd; \
+            test_copy_rebuild_raid4_split_all_missing_second_half; \
+         cleanup_split_rebuild"
+        "setup_split_rebuild odd; \
             test_copy_rebuild_raid4_split_all_missing_xor; \
          cleanup_split_rebuild")

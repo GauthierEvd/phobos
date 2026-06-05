@@ -18,6 +18,7 @@
    will necessarily be written on media different from the source copy. For
    rebuild, the rebuilt extents of a split will be written on media
    different from the other extents of that split.
+ * add the "phobos copy rebuild" command to rebuild still readable copy
 
 ## 3.3.1
  * WARNING: the `--orphan` from `phobos extent list` changed to `--state`. It
