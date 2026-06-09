@@ -63,9 +63,6 @@ static int str2action(char *type, struct conf *conf)
     if (!strcmp(type, "put")) {
         conf->action = phobos_put;
         conf->type = PHO_XFER_OP_PUT;
-    } else if (!strcmp(type, "get")) {
-        conf->action = phobos_get;
-        conf->type = PHO_XFER_OP_GET;
     } else {
         return -EINVAL;
     }
@@ -111,14 +108,14 @@ static void usage(char *progname)
 {
     printf(
         "Usage: %s [--load-first] [--num-threads <n>] "
-        "[--action <put|get] --file <file>\n"
+        "[--action <put>] --file <file>\n"
         "Run <n> synchronized store actions concurrently to check for race "
         "conditions\n"
         "\n"
-        "    --action      one of put, get\n"
+        "    --action      put\n"
         "    --load-first  load the config file before starting threads\n"
         "    --num-threads number of concurrent operation run simultaneously\n"
-        "    --file        name of the file to read for put or write for get\n",
+        "    --file        name of the file to read for put\n",
         progname);
 }
 
@@ -224,7 +221,6 @@ int main(int argc, char **argv)
     printf("Will perform %d concurrent %ss...\n",
            conf.num_threads,
            conf.type == PHO_XFER_OP_PUT ? "put" :
-           conf.type == PHO_XFER_OP_GET ? "get" :
            "???");
 
     rc = file_size(conf.file, &size);
