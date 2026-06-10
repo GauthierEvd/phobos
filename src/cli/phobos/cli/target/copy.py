@@ -37,7 +37,7 @@ from phobos.cli.common.utils import (check_output_attributes, create_put_params,
 from phobos.core.const import DSS_OBJ_ALIVE #pylint: disable=no-name-in-module
 from phobos.core.ffi import CopyInfo
 from phobos.core.store import (DelParams, GetParams, UtilClient, XferPutParams,
-                               XferGetParams, XferCopyParams)
+                               XferGetParams, XferCopyParams, XferRebuildParams)
 from phobos.output import dump_object_list
 
 
@@ -272,7 +272,7 @@ class CopyOptHandler(XferOptHandler):
         get_params = XferGetParams(GetParams(copy_name=copy,
                                              node_name=None,
                                              scope=scope))
-        params = XferCopyParams(get_params, put_params)
+        params = XferRebuildParams(get_params, put_params)
 
         try:
             client.copy_rebuild(oid, uuid, version, params)

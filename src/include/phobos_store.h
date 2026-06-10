@@ -212,14 +212,34 @@ struct pho_xfer_copy_params {
     struct pho_xfer_put_params put; /**< Put parameters to use to copy */
 };
 
+/*
+ * REBUILD parameters.
+ *
+ * REBUILD combines the PUT and GET parameters because it selects a copy and
+ * rebuild some extents of this copy.
+ *
+ * If \p n_extents > 0, only the extent listed in \p extents_idx are rebuilt.
+ * Otherwise, all missing extents are rebuilt.
+ */
+struct pho_xfer_rebuild_params {
+    struct pho_xfer_get_params get; /**< Get parameters to use to rebuild */
+    struct pho_xfer_put_params put; /**< Put parameters to use to rebuild */
+    const int *extents_idx;         /**< List of extent index to rebuild
+                                      *  XXX: works only with one target per
+                                      *  xfer
+                                      */
+    size_t n_extents;
+};
+
 /**
  * Operation parameters.
  */
 union pho_xfer_params {
-    struct pho_xfer_put_params put;     /**< PUT parameters. */
-    struct pho_xfer_get_params get;     /**< GET parameters. */
-    struct pho_xfer_del_params delete;  /**< DEL parameters. */
-    struct pho_xfer_copy_params copy;   /**< COPY parameters. */
+    struct pho_xfer_put_params put;         /**< PUT parameters. */
+    struct pho_xfer_get_params get;         /**< GET parameters. */
+    struct pho_xfer_del_params delete;      /**< DEL parameters. */
+    struct pho_xfer_copy_params copy;       /**< COPY parameters. */
+    struct pho_xfer_rebuild_params rebuild; /**< REBUILD parameters. */
 };
 
 /**
@@ -704,6 +724,44 @@ int phobos_rename(const char *old_oid, const char *uuid, const char *new_oid);
 int phobos_copy(struct pho_xfer_desc *xfers, size_t n,
                 pho_completion_cb_t cb, void *udata);
 
+/**
+ * Rebuild N copies
+ *
+ * Each Xfer descriptor must describe a REBUILD operation and provide ONLY one
+ * target. A target must provide:
+ *   - xt_objid   : identifier of the object to rebuild (MANDATORY)
+ *   - xt_objuuid : uuid of the object to rebuild
+ *                  if not NULL, this field is duplicated internally and freed
+ *                  by pho_xfer_desc_clean(). The caller have to make sure to
+ *                  keep a copy of this pointer if it needs to be freed.
+ *  - xt_version  : version of the object to rebuild
+ *  - Other target attributes are unused.
+ *
+ * The copy_name in the GET and PUT params must also be set to select which
+ * copy to rebuild.
+ *
+ * The scope in the GET params inside the `pho_xfer_copy_params` MUST be set.
+ * See the `pho_xfer_get_params`.
+ *
+ * If the scope is alive, Phobos will search the object in the alive table with
+ * the oid, uuid and version specified.
+ *
+ * If the scope is deprecated, Phobos will search the object in the deprecated
+ * table with the oid, uuid and version specified. If there are many objects
+ * available with the provided filter it will fail. The uuid or version must be
+ * also specified.
+ *
+ * If the scope is all, Phobos will search the object in the alive table first
+ * and then in the deprecated table. Phobos will apply the rules described
+ * above.
+ *
+ * \param[in,out]  xfers  List of Xfer descriptors
+ * \param[in]      n      Number of Xfer descriptors
+
+ * @return              0 on success or -errno on failure.
+ *
+ * This must be called after phobos_init.
+ */
 int phobos_copy_rebuild(struct pho_xfer_desc *xfers, size_t num_xfers);
 
 /**

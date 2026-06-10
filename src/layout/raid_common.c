@@ -68,7 +68,9 @@ size_t get_n_extents(struct raid_io_context *io_context,
 static struct pho_xfer_put_params *get_put_params(
                                             struct pho_data_processor *proc)
 {
-    if (proc->type == PHO_PROC_REBUILDER || proc->type == PHO_PROC_COPIER)
+    if (proc->type == PHO_PROC_REBUILDER)
+        return &proc->xfer->xd_params.rebuild.put;
+    else if (proc->type == PHO_PROC_COPIER)
         return &proc->xfer->xd_params.copy.put;
     else
         return &proc->xfer->xd_params.put;
@@ -91,9 +93,13 @@ int raid_get_nb_extent_to_rebuild(struct pho_data_processor *rebuilder)
 {
     struct raid_io_context *io_context = rebuilder->private_reader;
     struct layout_info *layout = rebuilder->src_layout;
-    int nb_split = raid_get_nb_split(rebuilder);
     int nb_extent_per_split;
+    int nb_split;
 
+    if (rebuilder->xfer->xd_params.rebuild.n_extents > 0)
+        return rebuilder->xfer->xd_params.rebuild.n_extents;
+
+    nb_split = raid_get_nb_split(rebuilder);
     nb_extent_per_split = n_total_extents(io_context);
 
     return (nb_split * nb_extent_per_split) - layout->ext_count;
@@ -614,6 +620,36 @@ static size_t current_split_src_layout_n_extent(struct pho_data_processor *proc,
     return n_extent;
 }
 
+static size_t current_split_rebuild_n_extent(struct pho_data_processor *proc,
+                                             enum processor_type type)
+{
+    struct raid_io_context *io_context =
+        io_context_from_proc(proc, proc->current_target, type);
+    size_t n_extents_per_split = n_total_extents(io_context);
+    size_t first_idx = io_context->current_split * n_extents_per_split;
+    size_t first_excluded_idx =
+        (io_context->current_split + 1) * n_extents_per_split;
+    size_t n_extents = 0;
+
+    if (proc->xfer->xd_params.rebuild.n_extents > 0) {
+        const struct pho_xfer_rebuild_params *params =
+            &proc->xfer->xd_params.rebuild;
+
+        for (size_t i = 0; i < params->n_extents; i++)
+            if (params->extents_idx[i] >= first_idx &&
+                params->extents_idx[i] < first_excluded_idx)
+                n_extents++;
+
+        return n_extents;
+    }
+
+    n_extents = current_split_src_layout_n_extent(proc, type);
+    if (n_extents == n_extents_per_split)
+        return 0;
+
+    return n_extents_per_split - n_extents;
+}
+
 /** Generate the next read or delete allocation request for this eraser */
 static void raid_reader_eraser_build_allocation_req(
     struct pho_data_processor *proc, pho_req_t *req, enum processor_type type)
@@ -685,7 +721,21 @@ static void raid_writer_set_extent_info(struct raid_io_context *io_context,
         raid_set_extent_info(&extents[i], medium[i], extent_idx + i, offset);
 }
 
-static void raid_rebuilder_set_extent_info(struct raid_io_context *io_context,
+static bool extent_from_rebuild_list(const struct pho_data_processor *proc,
+                                     int idx)
+{
+    const struct pho_xfer_rebuild_params *params =
+        &proc->xfer->xd_params.rebuild;
+
+    for (size_t i = 0; i < params->n_extents; i++)
+        if (params->extents_idx[i] == idx)
+            return true;
+
+    return false;
+}
+
+static void raid_rebuilder_set_extent_info(struct pho_data_processor *proc,
+                                           struct raid_io_context *io_context,
                                            pho_resp_write_elt_t **medium,
                                            struct layout_info *layout)
 {
@@ -697,7 +747,15 @@ static void raid_rebuilder_set_extent_info(struct raid_io_context *io_context,
     for (i = io_context->current_split * n_extents_per_split;
          i < (io_context->current_split + 1) * n_extents_per_split;
          i++) {
-        if (!extent_from_layout_idx(layout->extents, layout->ext_count, i)) {
+        bool rebuild_extent;
+
+        if (proc->xfer->xd_params.rebuild.n_extents > 0)
+            rebuild_extent = extent_from_rebuild_list(proc, i);
+        else
+            rebuild_extent = !extent_from_layout_idx(layout->extents,
+                                                     layout->ext_count, i);
+
+        if (rebuild_extent) {
             raid_set_extent_info(&extents[j], medium[j], i,
                                  io_context->current_split_offset);
             j++;
@@ -1197,17 +1255,15 @@ static size_t raid_seek_next_missing_split(struct pho_data_processor *proc,
     while (io_context->current_split * n_extents_per_split <= max_layout_idx) {
         size_t first_layout_idx =
             io_context->current_split * n_extents_per_split;
+        size_t n_extents = current_split_rebuild_n_extent(proc, type);
 
-        size_t n_extents =
-            current_split_src_layout_n_extent(proc, type);
-        if (n_extents == n_extents_per_split) {
+        if (n_extents == 0) {
             io_context->current_split++;
             continue;
         }
 
         if (type == PHO_PROC_ENCODER)
-            io_context->rebuild.current_split_missing_count =
-                n_extents_per_split - n_extents;
+            io_context->rebuild.current_split_missing_count = n_extents;
 
         /* Get offset of the first extent of this split */
         for (i = 0; i < layout->ext_count; i++) {
@@ -1415,7 +1471,7 @@ static int common_split_setup(struct pho_data_processor *proc)
     raid_io_context_setmd(io_context, proc->type, output->user_md);
 
     if (proc->type == PHO_PROC_REBUILDER)
-        raid_rebuilder_set_extent_info(io_context, wresp->media,
+        raid_rebuilder_set_extent_info(proc, io_context, wresp->media,
                                        proc->src_layout);
     else
         raid_writer_set_extent_info(io_context, wresp->media,
@@ -1736,6 +1792,7 @@ static void complete_and_transfer_release(struct pho_data_processor *proc,
                                           bool stop_io)
 {
     pho_req_release_t *release_req = proc->writer_release_alloc->release;
+    struct pho_xfer_put_params *params = get_put_params(proc);
     int i;
 
     ENTRY;
@@ -1747,10 +1804,7 @@ static void complete_and_transfer_release(struct pho_data_processor *proc,
         } else {
             release_req->media[i]->to_sync = true;
             release_req->media[i]->grouping =
-                (char *) xstrdup_safe((proc->type == PHO_PROC_COPIER ||
-                                       proc->type == PHO_PROC_REBUILDER) ?
-                                       proc->xfer->xd_params.copy.put.grouping :
-                                       proc->xfer->xd_params.put.grouping);
+                (char *) xstrdup_safe(params->grouping);
         }
     }
 

@@ -29,7 +29,8 @@ import os
 
 from collections import namedtuple
 from ctypes import (byref, c_bool, c_char_p, c_int, c_ssize_t, c_void_p, cast,
-                    CFUNCTYPE, pointer, POINTER, py_object, Structure, Union)
+                    CFUNCTYPE, pointer, POINTER, py_object, Structure, Union,
+                    c_size_t)
 from typing import Optional
 
 from phobos.core.ffi import (LIBPHOBOS, DeprecatedObjectInfo, ObjectInfo,
@@ -348,6 +349,35 @@ class CopyParams(namedtuple('CopyParams', '')):
     """
 CopyParams.__new__.__defaults__ = (None,) * len(CopyParams._fields)
 
+class XferRebuildParams(Structure): # pylint: disable=too-few-public-methods, too-many-instance-attributes
+    """Phobos REBUILD parameters of the XferDescriptor."""
+    _fields_ = [
+        ("get", XferGetParams),
+        ("put", XferPutParams),
+        ("extents_idx", POINTER(c_int)),
+        ("n_extents", c_size_t),
+    ]
+
+    def __init__(self, get, put, extents_idx=None):
+        super().__init__()
+        self.get = get
+        self.put = put
+
+        if extents_idx:
+            self.extents_idx = (c_int * len(extents_idx))(*extents_idx)
+            self.n_extents = len(extents_idx)
+        else:
+            self.extents_idx = None
+            self.n_extents = 0
+
+
+class RebuildParams(namedtuple('RebuildParams', '')):
+    """
+    Transition data structure for rebuild parameters between
+    the CLI and the XFer data structure.
+    """
+RebuildParams.__new__.__defaults__ = (None,) * len(RebuildParams._fields)
+
 class XferOpParams(Union): # pylint: disable=too-few-public-methods
     """Phobos operation parameters of the XferDescriptor."""
     _fields_ = [
@@ -355,6 +385,7 @@ class XferOpParams(Union): # pylint: disable=too-few-public-methods
         ("get", XferGetParams),
         ("delete", XferDelParams),
         ("copy", XferCopyParams),
+        ("rebuild", XferRebuildParams),
     ]
 
 class XferTarget(Structure): # pylint: disable=too-many-instance-attributes
@@ -871,7 +902,7 @@ class UtilClient:
             xfers[0].xd_targets[0].xt_objuuid = uuid
         if version is not None:
             xfers[0].xd_targets[0].xt_version = version
-        xfers[0].xd_params.copy = params
+        xfers[0].xd_params.rebuild = params
 
         rc = LIBPHOBOS.phobos_copy_rebuild(xfers, n_xfers)
 

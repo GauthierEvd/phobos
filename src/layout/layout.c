@@ -342,8 +342,7 @@ static int build_layout_rebuilder(struct pho_data_processor *rebuilder,
     if (rc)
         return rc;
 
-    // Use the copy params as the rebuild will use the get and put params
-    put_params = &xfer->xd_params.copy.put;
+    put_params = &xfer->xd_params.rebuild.put;
 
     rebuilder->dest_layout = xcalloc(1, sizeof(*rebuilder->dest_layout));
     rebuilder->dest_layout->oid = xstrdup(layout->oid);
@@ -377,7 +376,7 @@ int layout_rebuilder(struct pho_data_processor *rebuilder,
 
     /* get io_block_size from conf */
     rc = get_cfg_io_block_size(&rebuilder->io_block_size,
-                               xfer->xd_params.copy.put.family);
+                               rebuilder->xfer->xd_params.rebuild.put.family);
     if (rc)
         layout_destroy(rebuilder);
 
