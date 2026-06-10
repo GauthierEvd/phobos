@@ -163,8 +163,9 @@ static const char *get_xfer_param_reference_copy_name(
 {
     switch (xfer->xd_op) {
     case PHO_XFER_OP_COPY:
-    case PHO_XFER_OP_REBUILD:
         return xfer->xd_params.copy.get.copy_name;
+    case PHO_XFER_OP_REBUILD:
+        return xfer->xd_params.rebuild.get.copy_name;
     case PHO_XFER_OP_GET:
         return xfer->xd_params.get.copy_name;
     case PHO_XFER_OP_PUT:
@@ -176,11 +177,27 @@ static const char *get_xfer_param_reference_copy_name(
     }
 }
 
+static enum dss_obj_scope get_xfer_param_scope(const struct pho_xfer_desc *xfer)
+{
+    switch (xfer->xd_op) {
+    case PHO_XFER_OP_COPY:
+        return xfer->xd_params.copy.get.scope;
+    case PHO_XFER_OP_REBUILD:
+        return xfer->xd_params.rebuild.get.scope;
+    case PHO_XFER_OP_GET:
+        return xfer->xd_params.get.scope;
+    case PHO_XFER_OP_DEL:
+        return xfer->xd_params.delete.scope;
+    default:
+        return DSS_OBJ_ALIVE;
+    }
+}
+
 static int fill_rebuild_put_params_from_layout(struct dss_handle *dss,
                                                struct pho_xfer_desc *xfer,
                                                struct layout_info *layout)
 {
-    struct pho_xfer_put_params *put_params = &xfer->xd_params.copy.put;
+    struct pho_xfer_put_params *put_params = &xfer->xd_params.rebuild.put;
     struct string_array common_tags = NO_STRING;
     enum rsc_family family;
     const char *library;
@@ -322,9 +339,10 @@ static int send_generated_requests(struct pho_data_processor *proc,
         if (pho_request_is_write(req)) {
             struct pho_xfer_put_params *put_params;
 
-            if (proc->xfer->xd_op == PHO_XFER_OP_COPY ||
-                proc->xfer->xd_op == PHO_XFER_OP_REBUILD)
+            if (proc->xfer->xd_op == PHO_XFER_OP_COPY)
                 put_params = &proc->xfer->xd_params.copy.put;
+            else if (proc->xfer->xd_op == PHO_XFER_OP_REBUILD)
+                put_params = &proc->xfer->xd_params.rebuild.put;
             else
                 put_params = &proc->xfer->xd_params.put;
 
@@ -1133,9 +1151,7 @@ static int init_enc_or_dec(struct pho_data_processor *proc,
         rc = dss_find_object(dss, xfer->xd_targets->xt_objid,
                              xfer->xd_targets->xt_objuuid,
                              xfer->xd_targets->xt_version,
-                             xfer->xd_op == PHO_XFER_OP_DEL ?
-                                xfer->xd_params.delete.scope :
-                                xfer->xd_params.copy.get.scope,
+                             get_xfer_param_scope(xfer),
                              &obj);
     }
     if (rc)
@@ -1155,7 +1171,10 @@ static int init_enc_or_dec(struct pho_data_processor *proc,
         xfer->xd_targets->xt_size = obj->size;
         /* use existing grouping as default for copy */
         /* put grouping attribute must not be preset for a copy operation */
-        xfer->xd_params.copy.put.grouping = xstrdup_safe(obj->grouping);
+        if (xfer->xd_op == PHO_XFER_OP_COPY)
+            xfer->xd_params.copy.put.grouping = xstrdup_safe(obj->grouping);
+        else
+            xfer->xd_params.rebuild.put.grouping = xstrdup_safe(obj->grouping);
     }
 
     if (xfer->xd_op == PHO_XFER_OP_REBUILD) {
@@ -1344,6 +1363,137 @@ static int store_end_encoder_xfer(struct phobos_handle *pho,
     return 0;
 }
 
+static struct extent *extent_by_layout_idx(struct layout_info *layout,
+                                           int layout_idx)
+{
+    for (int i = 0; i < layout->ext_count; i++)
+        if (layout->extents[i].layout_idx == layout_idx)
+            return &layout->extents[i];
+
+    return NULL;
+}
+
+static int extent_layout_idx_cmp(const void *_lhs, const void *_rhs)
+{
+    const struct extent *lhs = _lhs;
+    const struct extent *rhs = _rhs;
+
+    return lhs->layout_idx - rhs->layout_idx;
+}
+
+static void build_rebuilder_final_layout(struct pho_data_processor *rebuilder,
+                                         struct layout_info *layout)
+{
+    struct layout_info *src_layout = rebuilder->src_layout;
+    struct layout_info *new_layout = rebuilder->dest_layout;
+    int ext_count = src_layout->ext_count;
+    int idx = 0;
+
+    *layout = *src_layout;
+
+    for (int i = 0; i < new_layout->ext_count; i++)
+        if (!extent_by_layout_idx(src_layout,
+                                  new_layout->extents[i].layout_idx))
+            ext_count++;
+
+    layout->ext_count = ext_count;
+    layout->extents = xcalloc(ext_count, sizeof(*layout->extents));
+
+    for (int i = 0; i < src_layout->ext_count; i++) {
+        struct extent *new_extent =
+            extent_by_layout_idx(new_layout, src_layout->extents[i].layout_idx);
+
+        layout->extents[idx++] = new_extent ? *new_extent :
+                                              src_layout->extents[i];
+    }
+
+    for (int i = 0; i < new_layout->ext_count; i++)
+        if (!extent_by_layout_idx(src_layout,
+                                  new_layout->extents[i].layout_idx))
+            layout->extents[idx++] = new_layout->extents[i];
+
+    qsort(layout->extents, layout->ext_count, sizeof(*layout->extents),
+          extent_layout_idx_cmp);
+}
+
+static int store_end_rebuilder_xfer(struct phobos_handle *pho,
+                                    struct pho_xfer_desc *xfer,
+                                    struct pho_data_processor *rebuilder)
+{
+    struct layout_info *new_layout = rebuilder->dest_layout;
+    struct layout_info *src_layout = rebuilder->src_layout;
+    struct layout_info missing_layout = *new_layout;
+    struct layout_info final_layout = {0};
+    struct copy_info copy = {0};
+    GArray *missing_extents;
+    int rc;
+
+    rc = dss_extent_insert(&pho->dss, new_layout->extents,
+                           new_layout->ext_count, DSS_SET_FULL_INSERT);
+    if (rc)
+        LOG_RETURN(rc, "Error while saving rebuilt extents for objid: '%s'",
+                   xfer->xd_targets->xt_objid);
+
+    missing_extents = g_array_new(FALSE, FALSE, sizeof(struct extent));
+    for (int i = 0; i < new_layout->ext_count; i++) {
+        struct extent *new_extent = &new_layout->extents[i];
+        struct extent *old_extent =
+            extent_by_layout_idx(src_layout, new_extent->layout_idx);
+
+        if (old_extent) {
+            /* Existing extents already have a layout row.  Rebuilding them is
+             * a replacement, so migrate the layout reference from the old
+             * extent to the rebuilt one and orphan the old extent, like repack.
+             */
+            rc = dss_update_extent_migrate(&pho->dss, old_extent->uuid,
+                                           new_extent->uuid);
+            if (rc) {
+                g_array_free(missing_extents, TRUE);
+                LOG_RETURN(rc, "Failed to migrate rebuilt extent");
+            }
+        } else {
+            /* Missing extents do not have a layout row yet.  Keep only those
+             * extents for dss_layout_insert(); the existing ones were handled
+             * above by migrating their current layout row.
+             */
+            g_array_append_val(missing_extents, *new_extent);
+        }
+    }
+
+    if (missing_extents->len > 0) {
+        missing_layout.ext_count = missing_extents->len;
+        missing_layout.extents = (struct extent *)missing_extents->data;
+
+        rc = dss_layout_insert(&pho->dss, &missing_layout, 1);
+        if (rc) {
+            g_array_free(missing_extents, TRUE);
+            LOG_RETURN(rc, "Error while saving rebuilt layout for objid: '%s'",
+                       xfer->xd_targets->xt_objid);
+        }
+    }
+
+    g_array_free(missing_extents, TRUE);
+
+    build_rebuilder_final_layout(rebuilder, &final_layout);
+
+    copy.object_uuid = xfer->xd_targets->xt_objuuid;
+    copy.version = xfer->xd_targets->xt_version;
+    copy.copy_name = src_layout->copy_name;
+    rc = layout_get_availability(final_layout, &copy);
+    free(final_layout.extents);
+    if (rc)
+        LOG_RETURN(rc, "Failed to compute rebuilt copy status for objid: '%s'",
+                   xfer->xd_targets->xt_objid);
+
+    rc = dss_copy_update(&pho->dss, &copy, &copy, 1,
+                         DSS_COPY_UPDATE_COPY_STATUS);
+    if (rc)
+        LOG_RETURN(rc, "Error while updating rebuilt copy status to %s",
+                   copy_status2str(copy.copy_status));
+
+    return 0;
+}
+
 static int store_end_decoder_xfer(struct phobos_handle *pho,
                                   struct pho_xfer_desc *xfer,
                                   struct pho_data_processor *proc)
@@ -1418,8 +1568,9 @@ static void store_end_xfer(struct phobos_handle *pho, size_t xfer_idx, int rc)
         goto cont;
 
     /* Once the encoder is done and successful, save the layout and metadata */
-    if (proc->dest_layout &&
-        (is_encoder(proc) || is_copier(proc) || is_rebuilder(proc)))
+    if (proc->dest_layout && is_rebuilder(proc))
+        rc = store_end_rebuilder_xfer(pho, xfer, proc);
+    else if (proc->dest_layout && (is_encoder(proc) || is_copier(proc)))
         rc = store_end_encoder_xfer(pho, xfer, proc);
     else if (xfer->xd_op == PHO_XFER_OP_GET)
         rc = store_end_decoder_xfer(pho, xfer, proc);
@@ -2507,6 +2658,14 @@ int phobos_copy_rebuild(struct pho_xfer_desc *xfers, size_t num_xfers)
 {
     phobos_prepare_xfer(xfers, num_xfers, PHO_XFER_OP_REBUILD, true);
 
+    for (size_t i = 0; i < num_xfers; i++) {
+        if (xfers[i].xd_params.rebuild.n_extents > 0 &&
+            xfers[i].xd_params.rebuild.extents_idx == NULL) {
+            xfers[i].xd_rc = -EINVAL;
+            return -EINVAL;
+        }
+    }
+
     return phobos_xfer(xfers, num_xfers, NULL, NULL);
 }
 
@@ -2602,14 +2761,23 @@ static void xfer_copy_param_clean(struct pho_xfer_desc *xfer)
     pho_attrs_free(&xfer->xd_params.copy.put.lyt_params);
 }
 
+static void xfer_rebuild_param_clean(struct pho_xfer_desc *xfer)
+{
+    free((void *)xfer->xd_params.rebuild.put.grouping);
+    xfer->xd_params.rebuild.put.grouping = NULL;
+    string_array_free(&xfer->xd_params.rebuild.put.tags);
+    pho_attrs_free(&xfer->xd_params.rebuild.put.lyt_params);
+}
+
 static void (*xfer_param_cleaner[PHO_XFER_OP_LAST])(struct pho_xfer_desc *) = {
-    [PHO_XFER_OP_PUT]   = xfer_put_param_clean,
-    [PHO_XFER_OP_GET]   = xfer_get_param_clean,
-    [PHO_XFER_OP_GETMD] = NULL,
-    [PHO_XFER_OP_SETMD] = NULL,
-    [PHO_XFER_OP_DEL]   = NULL,
-    [PHO_XFER_OP_UNDEL] = NULL,
-    [PHO_XFER_OP_COPY]  = xfer_copy_param_clean,
+    [PHO_XFER_OP_PUT]     = xfer_put_param_clean,
+    [PHO_XFER_OP_GET]     = xfer_get_param_clean,
+    [PHO_XFER_OP_GETMD]   = NULL,
+    [PHO_XFER_OP_SETMD]   = NULL,
+    [PHO_XFER_OP_DEL]     = NULL,
+    [PHO_XFER_OP_UNDEL]   = NULL,
+    [PHO_XFER_OP_COPY]    = xfer_copy_param_clean,
+    [PHO_XFER_OP_REBUILD] = xfer_rebuild_param_clean,
 };
 
 void pho_xfer_desc_clean(struct pho_xfer_desc *xfer)
