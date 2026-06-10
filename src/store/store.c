@@ -1105,6 +1105,12 @@ static int check_rebuild_copy_status(struct pho_data_processor *proc,
                   copy->copy_name, obj->oid);
         return -EINVAL;
     case PHO_COPY_STATUS_COMPLETE:
+        /* Allow to rebuild specific extents even if the status is complete.
+         * Extents might be still in the DSS but cannot be read.
+         */
+        if (xfer->xd_params.rebuild.n_extents > 0)
+            return 0;
+
         proc->done = true;
         pho_info("Status of copy '%s' for the object '%s' is complete, "
                  "nothing to rebuild",

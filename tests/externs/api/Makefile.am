@@ -36,6 +36,7 @@ TEST_LOG_DRIVER=$(TO_TEST)/test-driver.sh
 check_PROGRAMS=phobos_put_copy \
                test_bad_comm \
                test_concurrency \
+               test_copy_rebuild_extent_list \
                test_delete \
                test_dss \
                test_locate \
@@ -52,6 +53,7 @@ check_PROGRAMS=phobos_put_copy \
 
 check_SCRIPTS=test_bad_comm.sh \
               test_concurrency.test \
+              test_copy_rebuild_extent_list.test \
               test_delete.test \
               test_dss.sh \
               test_store.test \
@@ -73,6 +75,10 @@ check_SCRIPTS+=test_lib_dev_rados.sh test_io_rados.sh test_fs_rados.sh
 endif
 
 TESTS=$(check_SCRIPTS)
+
+test_copy_rebuild_extent_list_SOURCES=test_copy_rebuild_extent_list.c
+test_copy_rebuild_extent_list_LDADD=$(STORE_LIB) $(TESTS_LIB) $(TESTS_LIB_DEPS)
+test_copy_rebuild_extent_list_CFLAGS=$(TESTS_INCLUDE)
 
 phobos_put_copy_SOURCES=phobos_put_copy.c
 phobos_put_copy_LDADD=$(STORE_LIB) $(TESTS_LIB) $(TESTS_LIB_DEPS)

@@ -345,8 +345,8 @@ static int build_layout_rebuilder(struct pho_data_processor *rebuilder,
     put_params = &xfer->xd_params.rebuild.put;
 
     rebuilder->dest_layout = xcalloc(1, sizeof(*rebuilder->dest_layout));
-    rebuilder->dest_layout->oid = xstrdup(layout->oid);
-    rebuilder->dest_layout->uuid = xstrdup(layout->uuid);
+    rebuilder->dest_layout->oid = layout->oid;
+    rebuilder->dest_layout->uuid = layout->uuid;
     rebuilder->dest_layout->version = layout->version;
     rebuilder->dest_layout->copy_name = xstrdup(put_params->copy_name);
 

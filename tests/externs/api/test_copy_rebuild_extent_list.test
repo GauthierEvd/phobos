@@ -1,0 +1,161 @@
+#!/usr/bin/env bash
+#
+#  All rights reserved (c) 2014-2026 CEA/DAM.
+#
+#  This file is part of Phobos.
+#
+#  Phobos is free software: you can redistribute it and/or modify it under
+#  the terms of the GNU Lesser General Public License as published by
+#  the Free Software Foundation, either version 2.1 of the License, or
+#  (at your option) any later version.
+#
+#  Phobos is distributed in the hope that it will be useful,
+#  but WITHOUT ANY WARRANTY; without even the implied warranty of
+#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#  GNU Lesser General Public License for more details.
+#
+#  You should have received a copy of the GNU Lesser General Public License
+#  along with Phobos. If not, see <http://www.gnu.org/licenses/>.
+#
+
+#
+# API copy rebuild with extent list
+#
+
+test_bin_dir=$PWD
+test_bin="$test_bin_dir/test_copy_rebuild_extent_list"
+test_dir=$(dirname $(readlink -e $0))
+. $test_dir/test_env.sh
+. $test_dir/setup_db.sh
+. $test_dir/test_launch_daemon.sh
+. $test_dir/utils_generation.sh
+
+function setup
+{
+    setup_tables
+    setup_test_dirs
+
+    INPUT_FILE="$DIR_TEST/file"
+    dd if=/dev/urandom of="$INPUT_FILE" bs=64K count=1
+
+    DIRS=(
+          $(mktemp -d "$DIR_TEST/test_pho.XXXX")
+          $(mktemp -d "$DIR_TEST/test_pho.XXXX")
+          $(mktemp -d "$DIR_TEST/test_pho.XXXX")
+          $(mktemp -d "$DIR_TEST/test_pho.XXXX")
+          $(mktemp -d "$DIR_TEST/test_pho.XXXX")
+          $(mktemp -d "$DIR_TEST/test_pho.XXXX")
+         )
+
+    invoke_lrs
+
+    $phobos dir add ${DIRS[@]}
+    $phobos dir format --unlock ${DIRS[@]}
+}
+
+function cleanup
+{
+    waive_lrs
+    cleanup_test_dirs
+    drop_tables
+}
+
+function get_extent_info
+{
+    local oid=$1
+    local copy=$2
+    local column=$3
+
+    $phobos extent list -f json -o "$column" -c "$copy" "$oid" |
+        jq -r ".[0].$column[]"
+}
+
+function get_extent
+{
+    local idx=$1
+
+    $PSQL -t -c "
+        SELECT l.extent_uuid
+        FROM object o
+        JOIN layout l
+            ON l.object_uuid = o.object_uuid
+            AND l.version = o.version
+        WHERE o.oid = 'oid'
+            AND l.copy_name = 'source'
+            AND l.layout_index = $idx;
+    "
+}
+
+function test_rebuild_extent_list_raid1
+{
+    $phobos put -f dir -l raid1 --lyt-params=repl_count=4 $INPUT_FILE oid
+
+    local extents_before=($(get_extent_info oid source ext_uuid))
+    local hash_before=($(get_extent_info oid source xxh128))
+
+    waive_lrs
+    local media=($(get_extent_info oid source media_name))
+    $phobos dir del --lost ${media[0]} ${media[1]}
+    invoke_lrs
+
+    $LOG_COMPILER $test_bin oid source 1 2
+
+    local extents_after=($(get_extent_info oid source ext_uuid))
+    local hash_after=($(get_extent_info oid source xxh128))
+    local count=$($phobos extent list -o ext_count)
+    if [[ $count -ne 3 ]]; then
+        error "oid should have only 3 extents, got $count"
+    fi
+
+    # Extent lyt_index 2 should be different after the rebuild
+    if [[ ${extents_after[1]} == ${extents_before[2]} ]]; then
+        error "Extent lyt_index 2 should be different after the rebuild"
+    fi
+
+    if [[ ${extents_after[2]} != ${extents_before[3]} ]]; then
+        error "Extent lyt_index 3 should be the same"
+    fi
+
+    if [[ ${hash_after[0]} != ${hash_before[1]} ||
+          ${hash_after[1]} != ${hash_before[2]} ]]; then
+        error "Rebuilt extents should have the same content"
+    fi
+
+    # There should be no extent at lyt_index 0
+    local extent_0=$(get_extent 0)
+    if [[ ! -z $extent_0 ]]; then
+        error "Extent lyt_index 0 shouldn't be rebuilt"
+    fi
+}
+
+function test_rebuild_extent_list_raid4
+{
+    $phobos put -f dir -l raid4 $INPUT_FILE oid2
+
+    local extents_before=($(get_extent_info oid2 source ext_uuid))
+    local hash_before=($(get_extent_info oid2 source xxh128))
+
+    $LOG_COMPILER $test_bin oid2 source 1
+
+    local extents_after=($(get_extent_info oid2 source ext_uuid))
+    local hash_after=($(get_extent_info oid2 source xxh128))
+    local count=$($phobos extent list -o ext_count)
+    if [[ $count -ne 3 ]]; then
+        error "oid2 should have only 3 extents, got $count"
+    fi
+
+    if [[ ${extents_before[0]} != ${extents_after[0]} ||
+          ${extents_before[1]} == ${extents_after[1]} ||
+          ${extents_before[2]} != ${extents_after[2]} ]]; then
+        error "Only extent 1 should be rebuilt"
+    fi
+
+    if [[ ${hash_before[1]} != ${hash_after[1]} ]]; then
+        error "The content of extent 1 should be the same"
+    fi
+}
+
+TESTS=("setup; \
+            test_rebuild_extent_list_raid1; \
+            test_rebuild_extent_list_raid4; \
+        cleanup")

@@ -618,7 +618,6 @@ int dss_update_extent_migrate(struct dss_handle *handle, const char *old_uuid,
                               const char *new_uuid)
 {
     GString *request = g_string_new("BEGIN;");
-    PGresult *res;
     int rc = 0;
 
     g_string_append_printf(request,
@@ -627,7 +626,7 @@ int dss_update_extent_migrate(struct dss_handle *handle, const char *old_uuid,
         "UPDATE extent SET state = 'sync' WHERE extent_uuid = '%s';",
         new_uuid, old_uuid, old_uuid, new_uuid);
 
-    rc = execute_and_commit_or_rollback(handle->dh_conn, request, &res,
+    rc = execute_and_commit_or_rollback(handle->dh_conn, request, NULL,
                                         PGRES_COMMAND_OK);
     g_string_free(request, true);
     return rc;
@@ -637,7 +636,6 @@ int dss_update_extent_state(struct dss_handle *handle, const char **uuids,
                             int num_uuids, enum extent_state state)
 {
     GString *request = g_string_new("BEGIN;");
-    PGresult *res;
     int rc = 0;
     int i;
 
@@ -651,7 +649,7 @@ int dss_update_extent_state(struct dss_handle *handle, const char **uuids,
         g_string_append_printf(request, "extent_uuid = '%s'%s", uuids[i],
                                i == num_uuids - 1 ? ";" : " OR ");
 
-    rc = execute_and_commit_or_rollback(handle->dh_conn, request, &res,
+    rc = execute_and_commit_or_rollback(handle->dh_conn, request, NULL,
                                         PGRES_COMMAND_OK);
 
 req_free:
@@ -662,7 +660,6 @@ req_free:
 static int check_orphan(struct dss_handle *handle, const struct pho_id *tape)
 {
     GString *request = g_string_new("BEGIN;");
-    PGresult *res;
     int rc = 0;
 
     g_string_append_printf(request,
@@ -675,7 +672,7 @@ static int check_orphan(struct dss_handle *handle, const struct pho_id *tape)
         "    extent.medium_library = '%s');",
         tape->name, rsc_family2str(tape->family), tape->library);
 
-    rc = execute_and_commit_or_rollback(handle->dh_conn, request, &res,
+    rc = execute_and_commit_or_rollback(handle->dh_conn, request, NULL,
                                         PGRES_COMMAND_OK);
     g_string_free(request, true);
     return rc;
@@ -684,7 +681,6 @@ static int check_orphan(struct dss_handle *handle, const struct pho_id *tape)
 int dss_update_gc_for_tape(struct dss_handle *handle, const struct pho_id *tape)
 {
     GString *request = g_string_new("BEGIN;");
-    PGresult *res;
     int rc = 0;
 
     g_string_append_printf(request,
@@ -708,7 +704,7 @@ int dss_update_gc_for_tape(struct dss_handle *handle, const struct pho_id *tape)
         "   AND version = layout.version"
         ");", tape->name, rsc_family2str(tape->family), tape->library);
 
-    rc = execute_and_commit_or_rollback(handle->dh_conn, request, &res,
+    rc = execute_and_commit_or_rollback(handle->dh_conn, request, NULL,
                                         PGRES_COMMAND_OK);
     g_string_free(request, true);
     if (rc)
