@@ -436,8 +436,7 @@ class Client: # pylint: disable=too-many-public-methods
 
         rc = LIBPHOBOS_ADMIN.phobos_admin_media_import(byref(self.handle),
                                                        c_media(*media),
-                                                       len(list(media)),
-                                                       check_hash)
+                                                       len(list(media)))
 
         if rc:
             raise EnvironmentError(rc, "Failed to import tape(s)")

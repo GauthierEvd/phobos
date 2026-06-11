@@ -275,7 +275,6 @@ static struct lrs_dev *find_free_device(GPtrArray *devices)
 }
 
 static int exchange_device(struct io_scheduler *io_sched,
-                           enum io_request_type type,
                            struct lrs_dev *device_to_exchange)
 {
     union io_sched_claim_device_args args;
@@ -333,7 +332,7 @@ static int find_read_device(struct io_scheduler *io_sched,
         /* The tape to read is not on a drive owned by this scheduler. */
         int rc;
 
-        rc = exchange_device(io_sched, IO_REQ_READ, *dev);
+        rc = exchange_device(io_sched, *dev);
         if (rc)
             return rc;
 
@@ -430,7 +429,7 @@ search_again:
          */
         atomic_dev_medium_swap(*dev, *medium);
         if (!((*dev)->ld_io_request_type & IO_REQ_WRITE)) {
-            rc = exchange_device(io_sched, IO_REQ_WRITE, *dev);
+            rc = exchange_device(io_sched, *dev);
             if (rc)
                 return rc;
         }
@@ -485,7 +484,7 @@ static int find_format_device(struct io_scheduler *io_sched,
         /* The tape to format is not on a drive owned by this scheduler. */
         int rc;
 
-        rc = exchange_device(io_sched, IO_REQ_FORMAT, *dev);
+        rc = exchange_device(io_sched, *dev);
         if (rc)
             return rc;
 

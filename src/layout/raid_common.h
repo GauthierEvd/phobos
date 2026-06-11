@@ -190,12 +190,10 @@ int raid_encoder_init(struct pho_data_processor *encoder,
                       const struct raid_ops *raid_ops);
 
 int raid_decoder_init(struct pho_data_processor *decoder,
-                      const struct module_desc *module,
                       const struct pho_proc_ops *enc_ops,
                       const struct raid_ops *raid_ops);
 
 int raid_eraser_init(struct pho_data_processor *eraser,
-                     const struct module_desc *module,
                      const struct pho_proc_ops *enc_ops,
                      const struct raid_ops *raid_ops);
 

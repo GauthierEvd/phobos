@@ -501,7 +501,7 @@ objects_free:
  */
 static int _import_file_to_dss(struct admin_handle *adm, int fd,
                                char *rootpath, char *filename, off_t fsize,
-                               struct timespec f_ctime, int height,
+                               struct timespec f_ctime,
                                struct pho_id med_id, size_t *size_written,
                                long long *nb_new_obj)
 {
@@ -599,7 +599,7 @@ static int _explore_from_path_aux(struct admin_handle *adm,
                                   struct pho_id med_id,
                                   int (*func)(struct admin_handle *, int,
                                               char *, char *, off_t,
-                                              struct timespec, int,
+                                              struct timespec,
                                               struct pho_id, size_t *,
                                               long long *),
                                   size_t *size_written, long long *nb_new_obj)
@@ -660,7 +660,7 @@ static int _explore_from_path_aux(struct admin_handle *adm,
                                    med_id, (*func), size_written, nb_new_obj);
         else {
             rc = (func)(adm, fd, address_buf, entry->d_name, stat_buf.st_size,
-                        stat_buf.st_ctim, height, med_id, size_written,
+                        stat_buf.st_ctim, med_id, size_written,
                         nb_new_obj);
             if (rc)
                 pho_error(rc, "Could not extract information from the file,"
@@ -707,7 +707,7 @@ static int explore_from_path(struct admin_handle *adm, char *root_path,
                              struct pho_id med_id,
                              int (*func)(struct admin_handle *, int, char *,
                                          char *, off_t, struct timespec,
-                                         int, struct pho_id,
+                                         struct pho_id,
                                          size_t *, long long *),
                              size_t *size_written, long long *nb_new_obj)
 {
@@ -715,8 +715,7 @@ static int explore_from_path(struct admin_handle *adm, char *root_path,
                                  size_written, nb_new_obj);
 }
 
-int import_medium(struct admin_handle *adm, struct media_info *medium,
-                  bool check_hash)
+int import_medium(struct admin_handle *adm, struct media_info *medium)
 {
     struct pho_id id = medium->rsc.id;
     enum address_type addr_type;

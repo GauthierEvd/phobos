@@ -513,7 +513,7 @@ static int process_refresh_request(struct tlc *tlc, pho_tlc_req_t *req,
     return rc;
 }
 
-static int process_stat_request(struct tlc *tlc, pho_tlc_req_t *req,
+static int process_stat_request(pho_tlc_req_t *req,
                                 int client_socket)
 {
     pho_tlc_resp_t resp;
@@ -611,7 +611,7 @@ static int recv_work(struct tlc *tlc)
 
         if (pho_tlc_request_is_stat(req)) {
             pho_stat_incr(tlc->req_stats[PHO_TLC_REQ_STAT], 1);
-            process_stat_request(tlc, req, data[i].fd);
+            process_stat_request(req, data[i].fd);
             goto out_request;
         }
 

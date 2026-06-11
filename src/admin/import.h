@@ -38,8 +38,7 @@
  *
  * @return 0 on success, -errno on failure.
  */
-int import_medium(struct admin_handle *adm, struct media_info *medium,
-                  bool check_hash);
+int import_medium(struct admin_handle *adm, struct media_info *medium);
 
 /**
  * Update the copy_status of a copy

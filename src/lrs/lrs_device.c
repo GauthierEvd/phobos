@@ -280,8 +280,7 @@ static void sub_request_free_wrapper(gpointer sub_req, gpointer _null_user_data)
     sub_request_free((struct sub_request *)sub_req);
 }
 
-static void lrs_dev_info_clean(struct lrs_dev_hdl *handle,
-                               struct lrs_dev *dev)
+static void lrs_dev_info_clean(struct lrs_dev *dev)
 {
     free((void *)dev->ld_technology);
     lrs_medium_release(dev->ld_dss_media_info);
@@ -375,7 +374,7 @@ int lrs_dev_hdl_del(struct lrs_dev_hdl *handle, int index, int rc,
                   dev->ld_dss_dev_info->rsc.id.library);
 
     io_sched_remove_device(&sched->io_sched_hdl, dev);
-    lrs_dev_info_clean(handle, dev);
+    lrs_dev_info_clean(dev);
 
     return 0;
 }
@@ -423,7 +422,7 @@ int lrs_dev_hdl_trydel(struct lrs_dev_hdl *handle, int index)
                   dev->ld_dss_dev_info->rsc.id.library);
 
     g_ptr_array_remove_fast(handle->ldh_devices, dev);
-    lrs_dev_info_clean(handle, dev);
+    lrs_dev_info_clean(dev);
 
     return 0;
 }
@@ -445,7 +444,7 @@ int lrs_dev_hdl_retrydel(struct lrs_dev_hdl *handle, struct lrs_dev *dev)
                   dev->ld_dss_dev_info->rsc.id.name);
 
     g_ptr_array_remove_fast(handle->ldh_devices, dev);
-    lrs_dev_info_clean(handle, dev);
+    lrs_dev_info_clean(dev);
 
     return 0;
 }
@@ -515,7 +514,7 @@ void lrs_dev_hdl_clear(struct lrs_dev_hdl *handle, struct lrs_sched *sched)
                       dev->ld_dss_dev_info->rsc.id.name,
                       dev->ld_dss_dev_info->rsc.id.library);
         io_sched_remove_device(&sched->io_sched_hdl, dev);
-        lrs_dev_info_clean(handle, dev);
+        lrs_dev_info_clean(dev);
     }
 }
 

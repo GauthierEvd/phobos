@@ -121,7 +121,7 @@ static int local_setup(void **state, char *oid)
     filters.version = 1;
     filters.status_filter = DSS_STATUS_FILTER_ALL;
     rc = phobos_store_copy_list(&filters, DSS_OBJ_ALIVE,
-                                &pl_state->copies, &pl_state->n_copy, NULL);
+                                &pl_state->copies, &pl_state->n_copy);
     assert_return_code(rc, -rc);
     assert_int_equal(pl_state->n_copy, 1);
     assert_string_equal(pl_state->copies[0].object_uuid,

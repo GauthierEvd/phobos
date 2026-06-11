@@ -218,8 +218,7 @@ free_resp:
     return rc;
 }
 
-static int lib_tlc_scan(struct lib_handle *hdl, bool refresh, json_t **lib_data,
-                        json_t *message)
+static int lib_tlc_scan(struct lib_handle *hdl, bool refresh, json_t **lib_data)
 {
     struct lib_descriptor *lib;
     json_error_t json_error;

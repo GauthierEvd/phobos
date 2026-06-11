@@ -212,7 +212,7 @@ static int layout_raid4_decode(struct pho_data_processor *decoder)
                                      sizeof(*io_context->hashes));
     }
 
-    rc = raid_decoder_init(decoder, &RAID4_MODULE_DESC,
+    rc = raid_decoder_init(decoder,
                            &RAID4_READER_PROCESSOR_OPS, &RAID4_OPS);
     if (rc)
         return rc;
@@ -237,7 +237,7 @@ static int layout_raid4_erase(struct pho_data_processor *eraser)
     io_context->n_data_extents = 2;
     io_context->n_parity_extents = 1;
 
-    rc = raid_eraser_init(eraser, &RAID4_MODULE_DESC,
+    rc = raid_eraser_init(eraser,
                           &RAID4_ERASER_PROCESSOR_OPS, &RAID4_OPS);
 
     if (rc) {

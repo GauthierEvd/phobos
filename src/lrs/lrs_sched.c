@@ -209,8 +209,7 @@ static int check_dev_info(const struct lrs_dev *dev)
  * @param[in, out]  lock         already allocated lock to update
  */
 static int take_and_update_lock(struct dss_handle *dss, enum dss_type type,
-                                void *item, struct timeval *last_locate,
-                                struct pho_lock *lock)
+                                void *item, struct pho_lock *lock)
 {
     int rc2;
     int rc;
@@ -264,8 +263,7 @@ static int check_renew_owner(struct lock_handle *lock_handle,
                  dss_type_names[type], lock->owner, lock_handle->lock_owner);
 
         /* get the lock again */
-        rc = take_and_update_lock(lock_handle->dss, type, item,
-                                  &lock->last_locate, lock);
+        rc = take_and_update_lock(lock_handle->dss, type, item, lock);
         if (rc)
             LOG_RETURN(rc, "Unable to get and refresh lock");
     }
@@ -322,7 +320,7 @@ static int ensure_medium_lock(struct lock_handle *lock_handle,
         rc = check_renew_lock(lock_handle, DSS_MEDIA, medium, &medium->lock);
     } else {
     /* Try to take lock */
-        rc = take_and_update_lock(lock_handle->dss, DSS_MEDIA, medium, NULL,
+        rc = take_and_update_lock(lock_handle->dss, DSS_MEDIA, medium,
                                   &medium->lock);
     }
 
@@ -474,7 +472,7 @@ int sched_fill_dev_info(struct lrs_sched *sched, struct lib_handle *lib_hdl,
         /* get lock for loaded media */
         if (!dev->ld_dss_media_info->lock.hostname) {
             rc = take_and_update_lock(&sched->sched_thread.dss, DSS_MEDIA,
-                                      dev->ld_dss_media_info, NULL,
+                                      dev->ld_dss_media_info,
                                       &dev->ld_dss_media_info->lock);
             if (rc) {
                 const struct pho_id *med_id = lrs_dev_med_id(dev);
@@ -2120,8 +2118,7 @@ static int skip_read_alloc_medium(int rc, struct req_container *reqc,
     return 0;
 }
 
-static int _check_medium_status(struct req_container *reqc,
-                                struct media_info *medium)
+static int _check_medium_status(struct media_info *medium)
 {
     if (medium->fs.status == PHO_FS_STATUS_BLANK)
         LOG_RETURN(-EINVAL,
@@ -2141,8 +2138,7 @@ static int _check_medium_status(struct req_container *reqc,
     return 0;
 }
 
-static int _check_medium_on_read_alloc(struct req_container *reqc,
-                                       struct media_info *medium)
+static int _check_medium_on_read_alloc(struct media_info *medium)
 {
     if (!medium->flags.get)
         LOG_RETURN(-EPERM, "medium (family '%s', name '%s', library '%s') "
@@ -2153,8 +2149,7 @@ static int _check_medium_on_read_alloc(struct req_container *reqc,
     return 0;
 }
 
-static int _check_medium_on_delete_alloc(struct req_container *reqc,
-                                         struct media_info *medium)
+static int _check_medium_on_delete_alloc(struct media_info *medium)
 {
     if (!medium->flags.delete)
         LOG_RETURN(-EPERM, "medium (family '%s', name '%s', library '%s') "
@@ -2183,17 +2178,17 @@ static int check_medium_permission_and_status(struct req_container *reqc,
 
         if ((int)reqc->req->ralloc->operation ==
             PHO_READ_TARGET_ALLOC_OP_READ) {
-            rc = _check_medium_on_read_alloc(reqc, medium);
+            rc = _check_medium_on_read_alloc(medium);
             if (rc)
                 return rc;
         } else if ((int)reqc->req->ralloc->operation ==
             PHO_READ_TARGET_ALLOC_OP_DELETE) {
-            rc = _check_medium_on_delete_alloc(reqc, medium);
+            rc = _check_medium_on_delete_alloc(medium);
             if (rc)
                 return rc;
         }
 
-        rc = _check_medium_status(reqc, medium);
+        rc = _check_medium_status(medium);
         if (rc)
             return rc;
     } else if (pho_request_is_format(reqc->req) &&

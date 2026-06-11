@@ -2149,8 +2149,7 @@ out_free:
 
 int phobos_admin_media_import(struct admin_handle *adm,
                               struct media_info *med_ls,
-                              int med_cnt,
-                              bool check_hash)
+                              int med_cnt)
 {
     struct dss_filter filter;
     struct copy_info *copy;
@@ -2194,7 +2193,7 @@ int phobos_admin_media_import(struct admin_handle *adm,
                 return rc;
         }
 
-        rc = import_medium(adm, &med_ls[i], check_hash);
+        rc = import_medium(adm, &med_ls[i]);
         if (rc)
             LOG_RETURN(rc,
                        "Unable to import medium (family '%s', name '%s', "
@@ -2380,7 +2379,7 @@ int phobos_admin_lib_scan(enum lib_type lib_type, const char *library,
     device.family = PHO_RSC_TAPE;
     init_pho_log(&log, &device, &medium, PHO_LIBRARY_SCAN);
     log.message = json_object();
-    rc = ldm_lib_scan(&lib_hdl, refresh, lib_data, log.message);
+    rc = ldm_lib_scan(&lib_hdl, refresh, lib_data);
     emit_log_after_action(&dss, &log, PHO_LIBRARY_SCAN, rc);
     if (rc)
         LOG_GOTO(out, rc, "Failed to scan library '%s'", library);

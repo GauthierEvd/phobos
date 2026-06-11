@@ -803,8 +803,7 @@ class UtilClient:
 
         filters_ref = byref(PhoListFilters(list_filters))
         rc = LIBPHOBOS.phobos_store_copy_list(filters_ref,
-                                              scope, byref(copy), byref(n_copy),
-                                              None)
+                                              scope, byref(copy), byref(n_copy))
 
         if rc:
             items = f"copies '{res}'" if res else "all copies"

@@ -752,8 +752,7 @@ static const char *config_get_value(json_t *config, const char *key,
     return json_string_value(value);
 }
 
-static int handle_configure_request(struct lrs *lrs,
-                                    const struct req_container *reqc,
+static int handle_configure_request(const struct req_container *reqc,
                                     json_t *queried_elements)
 {
     pho_req_configure_t *confreq = reqc->req->configure;
@@ -841,7 +840,7 @@ static int _process_configure_request(struct lrs *lrs,
     if (!queried_elements)
         LOG_GOTO(send_error, rc = -errno, "Failed to create JSON array");
 
-    rc = handle_configure_request(lrs, reqc, queried_elements);
+    rc = handle_configure_request(reqc, queried_elements);
     if (rc)
         goto free_array;
 

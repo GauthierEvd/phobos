@@ -517,8 +517,7 @@ int phobos_admin_media_delete(struct admin_handle *adm, struct pho_id *med_ids,
  *                          -errno on failure
  */
 int phobos_admin_media_import(struct admin_handle *adm,
-                              struct media_info *med_ls, int med_cnt,
-                              bool check_hash);
+                              struct media_info *med_ls, int med_cnt);
 
 /**
  * Change the library of media.

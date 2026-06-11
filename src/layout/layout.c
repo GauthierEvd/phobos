@@ -215,7 +215,6 @@ int layout_encoder(struct pho_data_processor *encoder,
 };
 
 static int build_layout_reader(struct pho_data_processor *decoder,
-                               struct pho_xfer_desc *xfer,
                                struct layout_info *layout)
 {
     char layout_name[NAME_MAX];
@@ -247,7 +246,7 @@ int layout_decoder(struct pho_data_processor *decoder,
     decoder->done = false;
     decoder->xfer = xfer;
 
-    rc = build_layout_reader(decoder, xfer, layout);
+    rc = build_layout_reader(decoder, layout);
     if (rc) {
         layout_destroy(decoder);
         LOG_RETURN(rc, "unable to create reader part of a decoder");
@@ -314,7 +313,7 @@ int layout_copier(struct pho_data_processor *copier, struct pho_xfer_desc *xfer,
         LOG_RETURN(rc, "unable to create writer part of a copier");
     }
 
-    rc = build_layout_reader(copier, xfer, layout);
+    rc = build_layout_reader(copier, layout);
     if (rc) {
         layout_destroy(copier);
         LOG_RETURN(rc, "unable to create reader part of a copier");
@@ -364,7 +363,7 @@ int layout_rebuilder(struct pho_data_processor *rebuilder,
     rebuilder->done = false;
     rebuilder->xfer = xfer;
 
-    rc = build_layout_reader(rebuilder, xfer, layout);
+    rc = build_layout_reader(rebuilder, layout);
     if (rc) {
         layout_destroy(rebuilder);
         LOG_RETURN(rc, "Unable to create reader part of a rebuilder");

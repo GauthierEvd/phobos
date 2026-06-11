@@ -800,8 +800,7 @@ void phobos_store_object_list_free(struct object_info *objs, int n_objs);
  */
 int phobos_store_copy_list(struct pho_list_filters *filters,
                            enum dss_obj_scope scope,
-                           struct copy_info **copy, int *n_copy,
-                           struct dss_sort *sort);
+                           struct copy_info **copy, int *n_copy);
 
 /**
  * Release the list retrieved using phobos_store_copy_list().

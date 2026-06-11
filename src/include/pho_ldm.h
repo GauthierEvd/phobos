@@ -225,8 +225,7 @@ struct pho_lib_adapter_module_ops {
     int (*lib_close)(struct lib_handle *lib);
     int (*lib_drive_lookup)(struct lib_handle *lib, const char *drive_serial,
                             struct lib_drv_info *drv_info);
-    int (*lib_scan)(struct lib_handle *lib, bool refresh, json_t **lib_data,
-                    json_t *message);
+    int (*lib_scan)(struct lib_handle *lib, bool refresh, json_t **lib_data);
     int (*lib_load)(struct lib_handle *lib, const char *device_serial,
                     const char *medium_label);
     int (*lib_unload)(struct lib_handle *lib, const char *device_serial,
@@ -385,14 +384,13 @@ static inline int ldm_lib_drive_lookup(struct lib_handle *lib_hdl,
  * @param[out]    message   Json message to fill in case of error
  */
 static inline int ldm_lib_scan(struct lib_handle *lib_hdl, bool refresh,
-                               json_t **lib_data, json_t *message)
+                               json_t **lib_data)
 {
     assert(lib_hdl->ld_module != NULL);
     assert(lib_hdl->ld_module->ops != NULL);
     if (lib_hdl->ld_module->ops->lib_scan == NULL)
         return 0;
-    return lib_hdl->ld_module->ops->lib_scan(lib_hdl, refresh, lib_data,
-                                             message);
+    return lib_hdl->ld_module->ops->lib_scan(lib_hdl, refresh, lib_data);
 }
 
 /**

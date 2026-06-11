@@ -230,7 +230,6 @@ struct find_compatible_context {
 };
 
 static int exchange_device(struct io_scheduler *io_sched,
-                           enum io_request_type type,
                            struct lrs_dev *device_to_exchange);
 
 static struct device *find_device_from_lrs_dev(struct io_scheduler *io_sched,
@@ -276,8 +275,7 @@ static gboolean glib_stop_at_first_compatible(gpointer _queue_name,
         ctxt->device = find_device_from_lrs_dev(ctxt->io_sched,
                                                 dev_with_medium);
         if (!ctxt->device) {
-            int rc = exchange_device(ctxt->io_sched, IO_REQ_READ,
-                                     dev_with_medium);
+            int rc = exchange_device(ctxt->io_sched, dev_with_medium);
             if (rc)
                 return FALSE;
 
@@ -530,7 +528,6 @@ static struct lrs_dev *find_free_device(GPtrArray *devices)
 }
 
 static int exchange_device(struct io_scheduler *io_sched,
-                           enum io_request_type type,
                            struct lrs_dev *device_to_exchange)
 {
     union io_sched_claim_device_args args;
@@ -574,7 +571,7 @@ static int try_exchange_extra_devices(struct io_scheduler *io_sched,
     for (i = 0; i < len; i++) {
         int rc;
 
-        rc = exchange_device(io_sched, IO_REQ_READ, extra_devices[i]);
+        rc = exchange_device(io_sched, extra_devices[i]);
         if (rc) {
             pho_error(rc, "Failed to exchange devices");
             return rc;
@@ -1150,8 +1147,7 @@ static gint glib_is_reqc_first_in_queue(gconstpointer _elem,
  *      It could be done with the RAO for example.
  */
 static struct request_queue *
-find_next_queue_for_request(struct grouped_data *data,
-                            struct queue_element *elem)
+find_next_queue_for_request(struct queue_element *elem)
 {
     struct request_queue *queue = NULL;
 
@@ -1253,7 +1249,7 @@ static int grouped_get_device_medium_pair(struct io_scheduler *io_sched,
     }
 
     /* no device with a queue whose next request is reqc */
-    queue = find_next_queue_for_request(data, data->current_elem);
+    queue = find_next_queue_for_request(data->current_elem);
     if (!queue)
         return 0;
 
@@ -1394,7 +1390,7 @@ static int grouped_retry(struct io_scheduler *io_sched,
                                 m_id.name, m_id.library, NULL);
     if (*dev) {
         if (!((*dev)->ld_io_request_type & IO_REQ_READ)) {
-            rc = exchange_device(io_sched, IO_REQ_READ, *dev);
+            rc = exchange_device(io_sched, *dev);
             if (rc)
                 return rc;
         }

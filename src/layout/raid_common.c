@@ -179,7 +179,6 @@ int raid_encoder_init(struct pho_data_processor *encoder,
 }
 
 int raid_decoder_init(struct pho_data_processor *decoder,
-                      const struct module_desc *module,
                       const struct pho_proc_ops *enc_ops,
                       const struct raid_ops *raid_ops)
 {
@@ -203,7 +202,6 @@ int raid_decoder_init(struct pho_data_processor *decoder,
 }
 
 int raid_eraser_init(struct pho_data_processor *eraser,
-                     const struct module_desc *module,
                      const struct pho_proc_ops *eraser_ops,
                      const struct raid_ops *raid_ops)
 {
@@ -1439,8 +1437,7 @@ static int common_split_setup(struct pho_data_processor *proc)
     return rc;
 }
 
-static int raid_writer_split_setup(struct pho_data_processor *proc,
-                                   pho_resp_t *new_resp)
+static int raid_writer_split_setup(struct pho_data_processor *proc)
 {
     struct raid_io_context *io_context =
         &((struct raid_io_context *)
@@ -1628,8 +1625,7 @@ static void common_fill_layout(struct output_io_context *output,
 }
 
 static int raid_writer_handle_partial_release_resp(
-    struct pho_data_processor *encoder,
-    pho_resp_release_t *rel_resp
+    struct pho_data_processor *encoder
 )
 {
     struct raid_io_context *io_context;
@@ -1812,7 +1808,7 @@ int raid_writer_processor_step(struct pho_data_processor *proc,
     /* manage release */
     if (resp && pho_response_is_release(resp)) {
         if (pho_response_is_partial_release(resp)) {
-            rc = raid_writer_handle_partial_release_resp(proc, resp->release);
+            rc = raid_writer_handle_partial_release_resp(proc);
             if (rc)
                 goto set_target_rc;
         } else {
@@ -1835,7 +1831,7 @@ int raid_writer_processor_step(struct pho_data_processor *proc,
                 rc = context->mocks.mock_failure_after_second_partial_release();
         } else {
             proc->need_alloc_response_to_write = false;
-            rc = raid_writer_split_setup(proc, resp);
+            rc = raid_writer_split_setup(proc);
         }
 
         if (rc)
@@ -1910,7 +1906,7 @@ check_for_release:
                 proc->xfer->xd_targets[proc->current_target].xt_size;
 
             if (!need_new_alloc)
-                rc = raid_writer_split_setup(proc, NULL);
+                rc = raid_writer_split_setup(proc);
         }
     }
 

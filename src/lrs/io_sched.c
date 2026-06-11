@@ -187,8 +187,8 @@ int io_sched_peek_request(struct io_sched_handle *io_sched_hdl,
     if (rc)
         return rc;
 
-    *reqc = io_sched_hdl->next_request(io_sched_hdl, requests[0], requests[1],
-                                   requests[2]);
+    *reqc = io_sched_hdl->next_request(requests[0], requests[1],
+                                       requests[2]);
 
     return 0;
 }

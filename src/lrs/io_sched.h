@@ -223,8 +223,7 @@ struct io_sched_handle {
      * \return                the next request to schedule. This function may
      *                        return NULL
      */
-    struct req_container *(*next_request)(struct io_sched_handle *io_sched_hdl,
-                                          struct req_container *read,
+    struct req_container *(*next_request)(struct req_container *read,
                                           struct req_container *write,
                                           struct req_container *format);
 

@@ -80,8 +80,7 @@ int fair_share_number_of_requests(struct io_sched_handle *io_sched_hdl,
 
 /* Return the oldest request out of the 3.
  */
-struct req_container *fifo_next_request(struct io_sched_handle *io_sched_hdl,
-                                        struct req_container *read,
+struct req_container *fifo_next_request(struct req_container *read,
                                         struct req_container *write,
                                         struct req_container *format);
 
@@ -90,8 +89,7 @@ struct req_container *fifo_next_request(struct io_sched_handle *io_sched_hdl,
  * be returned is NULL, return the next one instead. If they are all NULL,
  * return NULL.
  */
-struct req_container *round_robin(struct io_sched_handle *io_sched_hdl,
-                                  struct req_container *read,
+struct req_container *round_robin(struct req_container *read,
                                   struct req_container *write,
                                   struct req_container *format);
 
