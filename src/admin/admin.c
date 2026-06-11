@@ -27,6 +27,7 @@
 #endif
 
 #include "phobos_admin.h"
+#include "phobos_store.h"
 
 #include <errno.h>
 #include <glib.h>
@@ -2945,6 +2946,92 @@ int phobos_admin_notify_media_update(struct admin_handle *adm,
 out_free:
     free(media);
     free(locks);
+
+    return rc;
+}
+
+static int rebuild_copy(struct layout_info *layout, struct pho_id *med)
+{
+    struct pho_xfer_target target = {0};
+    struct pho_xfer_desc xfer = {0};
+    GArray *indexes;
+    int rc = 0;
+    int i;
+
+    indexes = g_array_new(FALSE, FALSE, sizeof(int));
+
+    target.xt_objid = layout->oid;
+    target.xt_objuuid = layout->uuid;
+    target.xt_version = layout->version;
+
+    xfer.xd_ntargets = 1;
+    xfer.xd_targets = &target;
+    xfer.xd_params.rebuild.put.copy_name = layout->copy_name;
+    xfer.xd_params.rebuild.get.copy_name = layout->copy_name;
+    xfer.xd_params.rebuild.get.scope = DSS_OBJ_ALL;
+
+    for (i = 0; i < layout->ext_count; i++) {
+        if (pho_id_equal(med, &layout->extents[i].media))
+            g_array_append_val(indexes, layout->extents[i].layout_idx);
+    }
+
+    xfer.xd_params.rebuild.n_extents = indexes->len;
+    xfer.xd_params.rebuild.extents_idx = (int *) indexes->data;
+
+    rc = phobos_copy_rebuild(&xfer, 1);
+    if (rc)
+        pho_error(rc, "Failed to rebuild copy");
+
+    pho_xfer_desc_clean(&xfer);
+    g_array_free(indexes, TRUE);
+
+    return rc;
+}
+
+int phobos_admin_media_rebuild(struct admin_handle *adm, struct media_info *med,
+                               int med_cnt)
+{
+    struct layout_info *layouts;
+    struct dss_filter filter;
+    int n_layout;
+    int rc = 0;
+    int i;
+
+    for (i = 0; i < med_cnt; i++) {
+        if (med[i].rsc.id.family == PHO_RSC_DIR) {
+            rc = _normalize_path(med[i].rsc.id.name);
+            if (rc)
+                return rc;
+        }
+
+        rc = dss_filter_build(&filter,
+                              "{\"$AND\": ["
+                              "  {\"DSS::EXT::medium_id\": \"%s\"},"
+                              "  {\"DSS::EXT::medium_library\": \"%s\"}"
+                              "]}",
+                              med[i].rsc.id.name, med[i].rsc.id.library);
+        if (rc)
+            return rc;
+
+        rc = dss_full_layout_get(&adm->dss, NULL, &filter, &layouts, &n_layout,
+                                 NULL);
+        dss_filter_free(&filter);
+        if (rc) {
+            pho_error(rc, "Cannot fetch layouts for "FMT_PHO_ID,
+                      PHO_ID(med[i].rsc.id));
+            return rc;
+        }
+
+        for (int j = 0; j < n_layout; j++) {
+            struct layout_info *layout = &layouts[j];
+
+            rc = rebuild_copy(layout, &med[i].rsc.id);
+            if (rc)
+                return rc;
+        }
+
+        dss_res_free(layouts, n_layout);
+    }
 
     return rc;
 }

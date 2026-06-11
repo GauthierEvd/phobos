@@ -427,7 +427,7 @@ class Client: # pylint: disable=too-many-public-methods
                 rc, f"Failed to delete media(s) '{med_names}'")
         return count.value, len(med_ids)
 
-    def medium_import(self, fstype, media, check_hash, tags=None):
+    def medium_import(self, fstype, media, tags=None):
         """Import a new medium"""
         for med in media:
             init_medium(med, fstype, tags)
@@ -541,6 +541,18 @@ class Client: # pylint: disable=too-many-public-methods
             raise EnvironmentError(rc, f"Failed to rename media(s) '{media}'")
 
         return count.value
+
+    def medium_rebuild(self, family, media, library):
+        """Rebuild medium."""
+        c_id = Id * len(media)
+        med_ids = [Id(family=family, name=med, library=library)
+                   for med in media]
+
+        rc = LIBPHOBOS_ADMIN.phobos_admin_media_rebuild( \
+                                byref(self.handle), c_id(*med_ids),
+                                len(med_ids))
+        if rc:
+            raise EnvironmentError(rc, f"Failed to rebuild media(s) '{media}'")
 
     def stats(self, fullname, tags):
         """Retrieve stats from Phobos Daemon."""

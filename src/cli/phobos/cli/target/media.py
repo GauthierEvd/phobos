@@ -31,6 +31,7 @@ from phobos.cli.action.add import AddOptHandler
 from phobos.cli.action.format import FormatOptHandler
 from phobos.cli.action.list import ListOptHandler
 from phobos.cli.action.lock import LockOptHandler
+from phobos.cli.action.rebuild import RebuildOptHandler
 from phobos.cli.action.resource_delete import ResourceDeleteOptHandler
 from phobos.cli.action.unlock import UnlockOptHandler
 from phobos.cli.common import (BaseResourceOptHandler, env_error_format,
@@ -119,6 +120,20 @@ class MediaLocateOptHandler(ActionOptHandler):
                             help="Library containing the media to locate")
 
 
+class MediaRebuildOptHandler(RebuildOptHandler):
+    """Rebuild an existing media"""
+    label = 'rebuild'
+    descr = 'Rebuild all the extents of this media'
+
+    @classmethod
+    def add_options(cls, parser):
+        """Add resource-specific options."""
+        super(MediaRebuildOptHandler, cls).add_options(parser)
+        parser.add_argument('--library',
+                            help="Library containing rebuilt resources")
+        parser.add_argument('res', nargs='+', help='Resource(s) to rebuild')
+
+
 class MediaRenameOptHandler(ActionOptHandler):
     """Rename an existing media"""
     label = 'rename'
@@ -183,10 +198,11 @@ class MediaOptHandler(BaseResourceOptHandler):
     verbs = [
         FormatOptHandler,
         LockOptHandler,
-        MediaAddOptHandler,
+        MediaAddOptHandler, # pylint: disable=duplicate-code
         MediaListOptHandler,
         MediaLocateOptHandler,
-        MediaRenameOptHandler,
+        MediaRebuildOptHandler,
+        MediaRenameOptHandler, # pylint: disable=duplicate-code
         MediaSetAccessOptHandler,
         MediaUpdateOptHandler,
         ResourceDeleteOptHandler,
@@ -495,7 +511,6 @@ class MediaOptHandler(BaseResourceOptHandler):
     def exec_import(self):
         """Import a medium"""
         media_names = NodeSet.fromlist(self.params.get('media'))
-        check_hash = self.params.get('check_hash')
         adm_locked = not self.params.get('unlock')
         techno = self.params.get('type', '').upper()
         fstype = self.params.get('fs').upper()
@@ -508,7 +523,7 @@ class MediaOptHandler(BaseResourceOptHandler):
                                      library=self.library)
         try:
             with AdminClient(lrs_required=True) as adm:
-                adm.medium_import(fstype, media, check_hash)
+                adm.medium_import(fstype, media)
         except EnvironmentError as err:
             self.logger.error(env_error_format(err))
             sys.exit(abs(err.errno))
@@ -549,3 +564,16 @@ class MediaOptHandler(BaseResourceOptHandler):
 
         if count > 0:
             self.logger.info("Rename %d media(s) successfully", count)
+
+    def exec_rebuild(self):
+        """Rebuild a medium"""
+        resources = self.params.get('res')
+        set_library(self)
+
+        try:
+            with AdminClient(lrs_required=False) as adm:
+                adm.medium_rebuild(self.family, resources, self.library)
+
+        except EnvironmentError as err:
+            self.logger.error("%s", env_error_format(err))
+            sys.exit(abs(err.errno))

@@ -705,4 +705,17 @@ int phobos_admin_notify_media_update(struct admin_handle *adm,
 int phobos_admin_stats(struct admin_handle *adm, const char *full_name,
                        const char *tags, char **stats);
 
+/**
+ * Rebuild all the extents of a list of media.
+ *
+ * @param[in] adm      Valid admin handle
+ * @param[in] med      The list of media to rebuild
+ * @param[in] med_cnt  The number of media in \p med
+ *
+ * @return             0 on success,
+ *                     negative POSIX error code on error
+ */
+int phobos_admin_media_rebuild(struct admin_handle *adm, struct media_info *med,
+                               int med_cnt);
+
 #endif

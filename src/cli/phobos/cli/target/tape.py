@@ -31,6 +31,7 @@ from phobos.cli.target.media import (MediaAddOptHandler,
                                      MediaListOptHandler,
                                      MediaLocateOptHandler,
                                      MediaOptHandler,
+                                     MediaRebuildOptHandler,
                                      MediaRenameOptHandler,
                                      MediaSetAccessOptHandler,
                                      MediaUpdateOptHandler)
@@ -117,10 +118,11 @@ class TapeOptHandler(MediaOptHandler):
     family = ResourceFamily(ResourceFamily.RSC_TAPE)
     verbs = [
         LockOptHandler,
-        MediaListOptHandler,
+        MediaListOptHandler, # pylint: disable=duplicate-code
         MediaLocateOptHandler,
+        MediaRebuildOptHandler,
         MediaRenameOptHandler,
-        MediaUpdateOptHandler,
+        MediaUpdateOptHandler, # pylint: disable=duplicate-code
         ResourceDeleteOptHandler,
         TapeAddOptHandler,
         TapeFormatOptHandler,

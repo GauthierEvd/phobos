@@ -10,5 +10,5 @@ libphobos_admin_la_LIBADD=../core/libpho_core.la \
                           ../layout-modules/libpho_layout_raid1.la \
                           ../io-modules/libpho_io_adapter_posix.la \
                           ../io-modules/libpho_io_adapter_ltfs.la \
-                          ../layout/libpho_layout.la
+                          ../layout/libpho_layout.la ../store/libphobos_store.la
 libphobos_admin_la_CFLAGS=$(AM_CFLAGS) -I../io-modules -I../layout-modules

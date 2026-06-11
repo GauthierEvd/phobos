@@ -1,0 +1,113 @@
+#!/usr/bin/env bash
+#
+#  All rights reserved (c) 2014-2026 CEA/DAM.
+#
+#  This file is part of Phobos.
+#
+#  Phobos is free software: you can redistribute it and/or modify it under
+#  the terms of the GNU Lesser General Public License as published by
+#  the Free Software Foundation, either version 2.1 of the Licence, or
+#  (at your option) any later version.
+#
+#  Phobos is distributed in the hope that it will be useful,
+#  but WITHOUT ANY WARRANTY; without even the implied warranty of
+#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#  GNU Lesser General Public License for more details.
+#
+#  You should have received a copy of the GNU Lesser General Public License
+#  along with Phobos. If not, see <http://www.gnu.org/licenses/>.
+#
+#
+# Integration test for media rebuild
+#
+
+test_dir=$(dirname $(readlink -e $0))
+. $test_dir/test_env.sh
+. $test_dir/setup_db.sh
+. $test_dir/test_launch_daemon.sh
+. $test_dir/utils_generation.sh
+
+function setup
+{
+    setup_tables
+    setup_test_dirs
+
+    INPUT_FILE="$DIR_TEST_IN/file"
+    dd if=/dev/urandom of="$INPUT_FILE" bs=1K count=16
+
+    DIRS=(
+          $(mktemp -d "$DIR_TEST_IN/test_pho.XXXX")
+          $(mktemp -d "$DIR_TEST_IN/test_pho.XXXX")
+          $(mktemp -d "$DIR_TEST_IN/test_pho.XXXX")
+         )
+
+    invoke_lrs
+
+    $phobos dir add ${DIRS[@]}
+    $phobos dir format --unlock ${DIRS[@]}
+}
+
+function cleanup
+{
+    waive_lrs
+
+    cleanup_test_dirs
+    drop_tables
+}
+
+function get_extent_info
+{
+    local oid=$1
+    local media=$2
+    local column=$3
+
+    $phobos extent list -n "$media" -o "$column" "$oid"
+}
+
+function check_number_extent
+{
+    local med1=$1
+    local expected_med1=$2
+    local med2=$3
+    local expected_med2=$4
+
+    local count="$("$phobos" extent list -n "$med1" | wc -l)"
+    if [[ $count -ne $expected_med1 ]]; then
+        error "There should be $expected_med1 extents in $med1, got $count"
+    fi
+
+    count="$("$phobos" extent list -n "$med2" | wc -l)"
+    if [[ $count -ne $expected_med2 ]]; then
+        error "There should be $expected_med2 extents in $med2, got $count"
+    fi
+}
+
+function test_media_rebuild
+{
+    $phobos dir lock ${DIRS[2]}
+    $phobos put -f dir -l raid1 --lyt-params=repl_count=2 $INPUT_FILE oid
+    $phobos put -f dir -l raid1 --lyt-params=repl_count=2 $INPUT_FILE oid2
+    $phobos dir unlock ${DIRS[2]}
+
+    oid_before=$(get_extent_info oid ${DIRS[0]} ext_uuid)
+    oid_hash_before=$(get_extent_info oid ${DIRS[0]} xxh128)
+
+    check_number_extent ${DIRS[0]} 2 ${DIRS[2]} 0
+
+    $valg_phobos dir rebuild ${DIRS[0]}
+
+    check_number_extent ${DIRS[0]} 0 ${DIRS[2]} 2
+
+    oid_after=$(get_extent_info oid ${DIRS[2]} ext_uuid)
+    oid_hash_after=$(get_extent_info oid ${DIRS[2]} xxh128)
+
+    if [[ "$oid_before" == "$oid_after" ]]; then
+        error "Oid should be rebuilt"
+    fi
+
+    if [[ "$oid_hash_after" != "$oid_hash_before" ]]; then
+        error "oid content should be the same"
+    fi
+}
+
+TESTS=("setup; test_media_rebuild; cleanup")
