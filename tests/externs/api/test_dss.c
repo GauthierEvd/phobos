@@ -147,6 +147,7 @@ static int convert_pid(const char *pid)
 
 int main(int argc, char **argv)
 {
+    struct object_info *layout_object = NULL;
     bool with_outer_filter = false;
     struct dss_filter outer_filter;
     struct dss_handle *dss_handle;
@@ -154,6 +155,7 @@ int main(int argc, char **argv)
     enum dss_set_action action;
     struct object_info *object;
     struct layout_info *layout;
+    int layout_object_cnt = 0;
     bool with_filter = false;
     struct dss_filter filter;
     struct media_info *media;
@@ -424,6 +426,32 @@ int main(int argc, char **argv)
                     rc = asprintf(&s, "%sCOPY", layout->oid);
                     assert(rc > 0);
                     layout->oid = s;
+
+                    rc = dss_filter_build(&filter,
+                                          "{\"DSS::OBJ::oid\": \"%s\"}",
+                                          layout->oid);
+                    if (rc) {
+                        pho_error(rc, "Cannot build copied object filter");
+                        exit(EXIT_FAILURE);
+                    }
+
+                    rc = dss_object_get(dss_handle, &filter, &layout_object,
+                                        &layout_object_cnt, NULL);
+                    dss_filter_free(&filter);
+                    if (rc) {
+                        pho_error(rc, "Cannot retrieve copied object");
+                        exit(EXIT_FAILURE);
+                    }
+
+                    if (layout_object_cnt != 1) {
+                        pho_error(-ENOENT,
+                                  "Expected one copied object, retrieved %d",
+                                  layout_object_cnt);
+                        exit(EXIT_FAILURE);
+                    }
+
+                    layout->uuid = layout_object->uuid;
+                    layout->version = layout_object->version;
                     item_list = layout;
                     item_cnt = 1;
                 }
@@ -439,6 +467,7 @@ int main(int argc, char **argv)
 
         rc = dss_generic_set(dss_handle, type, item_list, item_cnt, action,
                              fields);
+        dss_res_free(layout_object, layout_object_cnt);
         if (rc) {
             pho_error(rc, "dss_set failed");
             exit(EXIT_FAILURE);

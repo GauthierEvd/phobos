@@ -114,11 +114,8 @@ static int layout_insert_query(PGconn *conn, void *void_layout, int item_cnt,
             struct extent *extent = &layout->extents[j];
 
             g_string_append_printf(
-                request,
-                "((select object_uuid from object where oid = '%s'),"
-                " (select version from object where oid = '%s'),"
-                " '%s', %d, '%s')",
-                layout->oid, layout->oid, extent->uuid,
+                request, "('%s', %d, '%s', %d, '%s')",
+                layout->uuid, layout->version, extent->uuid,
                 extent->layout_idx, layout->copy_name
             );
 
@@ -143,10 +140,9 @@ static int layout_insert_query(PGconn *conn, void *void_layout, int item_cnt,
         g_string_append_printf(
             request,
             "UPDATE copy SET lyt_info = '%s' WHERE "
-            "object_uuid = (SELECT object_uuid FROM object WHERE oid = '%s') "
-            "AND version = (SELECT version FROM object WHERE oid = '%s') AND "
-            "copy_name = '%s';",
-            layout_description, layout->oid, layout->oid, layout->copy_name
+            "object_uuid = '%s' AND version = %d AND copy_name = '%s';",
+            layout_description, layout->uuid, layout->version,
+            layout->copy_name
         );
 
         free(layout_description);

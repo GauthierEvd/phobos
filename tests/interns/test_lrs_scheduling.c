@@ -2292,7 +2292,6 @@ int main(void)
         cmocka_unit_test(io_sched_exchange_device),
     };
     int error_count;
-    int rc;
 
     pho_context_init();
     atexit(pho_context_fini);
@@ -2308,9 +2307,9 @@ int main(void)
 
     IO_REQ_TYPE = IO_REQ_FORMAT;
     pho_info("Starting I/O scheduler test for FORMAT requests");
-    rc += cmocka_run_group_tests(test_io_sched_api,
-                                 io_sched_setup,
-                                 io_sched_teardown);
+    error_count += cmocka_run_group_tests(test_io_sched_api,
+                                          io_sched_setup,
+                                          io_sched_teardown);
 
     IO_REQ_TYPE = IO_REQ_WRITE;
     pho_info("Starting I/O scheduler test for WRITE requests");

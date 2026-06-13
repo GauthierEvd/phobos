@@ -572,6 +572,8 @@ static int _import_file_to_dss(struct admin_handle *adm, int fd,
         LOG_RETURN(rc, "Could not add object to DSS");
 
     lyt_to_insert.oid = obj_to_insert.oid;
+    lyt_to_insert.uuid = obj_to_insert.uuid;
+    lyt_to_insert.version = obj_to_insert.version;
 
     rc = _add_extent_to_dss(&adm->dss, &lyt_to_insert, &ext_to_insert);
     if (rc)
