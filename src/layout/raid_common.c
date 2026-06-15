@@ -713,6 +713,52 @@ static size_t current_split_rebuild_n_extent(struct pho_data_processor *proc,
     return n_extents_per_split - n_extents;
 }
 
+/* Check if an index is in the extent list to rebuild */
+static bool layout_idx_in_extent_list(struct pho_data_processor *proc,
+                                      size_t layout_idx)
+{
+    const int *extents_idx = proc->xfer->xd_params.rebuild.extents_idx;
+    size_t n_extents = proc->xfer->xd_params.rebuild.n_extents;
+
+    for (int i = 0; i < n_extents; i++) {
+        if (extents_idx[i] == layout_idx)
+            return true;
+    }
+
+    return false;
+}
+
+/* Retrieve the number of extents available to read from.
+ * If proc is a REBUILDER and a list of extents to rebuild is specified,
+ * also check that these extents are not requested for rebuild.
+ */
+static size_t current_split_read_alloc_n_extent(struct pho_data_processor *proc,
+                                                enum processor_type type)
+{
+    struct raid_io_context *io_context =
+        io_context_from_proc(proc, proc->current_target, type);
+    size_t n_extents_per_split = n_total_extents(io_context);
+    size_t n_extents = 0;
+    int idx;
+
+    for (idx = io_context->current_split * n_extents_per_split;
+         idx < (io_context->current_split + 1) * n_extents_per_split;
+         idx++) {
+        if (!extent_from_layout_idx(proc->src_layout->extents,
+                                    proc->src_layout->ext_count, idx))
+            continue;
+
+        if (is_rebuilder(proc) &&
+            proc->xfer->xd_params.rebuild.n_extents > 0 &&
+            layout_idx_in_extent_list(proc, idx))
+            continue;
+
+        n_extents++;
+    }
+
+    return n_extents;
+}
+
 /** Generate the next read or delete allocation request for this eraser */
 static void raid_reader_eraser_build_allocation_req(
     struct pho_data_processor *proc, pho_req_t *req, enum processor_type type)
@@ -726,8 +772,9 @@ static void raid_reader_eraser_build_allocation_req(
 
     ENTRY;
 
-    current_split_n_extents = current_split_src_layout_n_extent(proc, type);
-    if (is_decoder(proc) || is_copier(proc))
+    current_split_n_extents = current_split_read_alloc_n_extent(proc, type);
+
+    if (is_decoder(proc) || is_copier(proc) || is_rebuilder(proc))
         assert(current_split_n_extents >= io_context->n_data_extents);
 
     pho_srl_request_read_alloc(req, current_split_n_extents);
@@ -744,6 +791,12 @@ static void raid_reader_eraser_build_allocation_req(
     for (layout_idx = io_context->current_split * n_extents_per_split;
          layout_idx < (io_context->current_split + 1) * n_extents_per_split;
          layout_idx++) {
+        /* Don't use the extents specify in the list to rebuild for reading */
+        if (is_rebuilder(proc) &&
+            proc->xfer->xd_params.rebuild.n_extents > 0 &&
+            layout_idx_in_extent_list(proc, layout_idx))
+            continue;
+
         struct extent *extent =
             extent_from_layout_idx(proc->src_layout->extents,
                                    proc->src_layout->ext_count, layout_idx);
