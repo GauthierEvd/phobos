@@ -210,7 +210,10 @@ static int lrs_dev_init_from_info(struct lrs_dev_hdl *handle,
     (*dev)->ld_handle = handle;
     (*dev)->ld_sub_request = NULL;
     (*dev)->ld_mnt_path[0] = 0;
-    (*dev)->ld_ongoing_socket_id = -1;
+    (*dev)->ld_ongoing_io = g_hash_table_new_full(g_direct_hash, g_direct_equal,
+                                                  NULL, g_free);
+    (*dev)->ld_ongoing_partial_io_waiting_sync =
+        g_hash_table_new_full(g_direct_hash, g_direct_equal, NULL, g_free);
 
     if ((*dev)->ld_dss_dev_info->rsc.model) {
         /* not every family has a model set */
@@ -292,6 +295,8 @@ static void lrs_dev_info_clean(struct lrs_dev *dev)
                         sub_request_free_wrapper, NULL);
     g_ptr_array_unref(dev->ld_sync_params.tosync_array);
     sub_request_free(dev->ld_sub_request);
+    g_hash_table_unref(dev->ld_ongoing_io);
+    g_hash_table_unref(dev->ld_ongoing_partial_io_waiting_sync);
     dev_info_free(dev->ld_dss_dev_info, 1);
     dss_fini(&dev->ld_device_thread.dss);
     dev_stats_destroy(dev);
@@ -675,11 +680,9 @@ static void clean_tosync_array(struct lrs_dev *dev, int rc)
         if (is_tosync_ended) {
             if (!req->reqc->params.release.rc) {
                 queue_release_response(dev->ld_response_queue, req->reqc);
-                /* If it is a partial request, it means that the client has not
-                 * finished writing
-                 */
                 if (req->reqc->req->release->partial)
-                    dev->ld_ongoing_io = true;
+                    move_ongoing_io(dev->ld_ongoing_partial_io_waiting_sync,
+                                    dev->ld_ongoing_io, req->reqc->socket_id);
             }
         } else {
             req->reqc = NULL;   /* only the last device free reqc */
@@ -751,12 +754,7 @@ void push_new_sync_to_device(struct lrs_dev *dev, struct req_container *reqc,
     set_tosync_stats(&dev->stats, sync_params);
 
     /* Set ld_needs_sync to true to avoid waiting until the threshold are
-     * exceeded
-     *
-     * This is really important for the partial release mecanism because
-     * no new IO should be scheduled even if the ld_ongoing_io flag is
-     * transiently set to true to allow the sync. For a partial release, the
-     * sync will set back the ld_ongoing_io to true.
+     * exceeded when we receive a partial release.
      */
     if (reqc->req->release->partial)
         dev->ld_needs_sync = true;
@@ -1944,12 +1942,9 @@ out_free:
         MUTEX_LOCK(&dev->ld_mutex);
 
     if (!io_ended && !sub_request_requeued) {
-        dev->ld_ongoing_io = true;
-        dev->ld_ongoing_socket_id = socket_id;
-        if (grouping) {
-            dev->ld_ongoing_grouping = grouping;
-            grouping = NULL;
-        }
+        g_hash_table_insert(dev->ld_ongoing_io, GINT_TO_POINTER(socket_id),
+                            grouping);
+        grouping = NULL;
     }
 
     free(grouping);
@@ -2230,7 +2225,8 @@ static void dev_thread_end(struct lrs_dev *device)
     if (device->ld_device_thread.status)
         dev_cleanup_on_error(device);
 
-    dev_clean_io(device, false);
+    g_hash_table_remove_all(device->ld_ongoing_io);
+    g_hash_table_remove_all(device->ld_ongoing_partial_io_waiting_sync);
 }
 
 static int dev_perform_sync(struct lrs_dev *device, struct thread_info *thread)
@@ -2277,14 +2273,14 @@ static void *lrs_dev_thread(void *tdata)
         if (!device->ld_needs_sync)
             check_needs_sync(device->ld_handle, device);
 
-        if (thread_is_stopping(thread) && !device->ld_ongoing_io &&
+        if (thread_is_stopping(thread) && !dev_has_ongoing_io(device) &&
             !device->ld_sub_request &&
             device->ld_sync_params.tosync_array->len == 0) {
             pho_debug("Switching to stopped");
             thread->state = THREAD_STOPPED;
         }
 
-        if (!device->ld_ongoing_io) {
+        if (!g_hash_table_size(device->ld_ongoing_io)) {
             if (device->ld_needs_sync) {
                 if (dev_perform_sync(device, thread))
                     goto end_thread;

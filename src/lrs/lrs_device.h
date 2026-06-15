@@ -286,14 +286,19 @@ struct lrs_dev {
     atomic_bool          ld_ongoing_scheduled;  /**< one I/O is going to be
                                                   *  scheduled
                                                   */
-    atomic_bool          ld_ongoing_io;         /**< one I/O is ongoing */
-    int                  ld_ongoing_socket_id;  /**< Socket fd of the ongoing
-                                                  * IO. -1 means no current
-                                                  * socket_id.
+    GHashTable          *ld_ongoing_io;         /**< Empty if no ongoing IO.
+                                                  *  Each ongoing IO is
+                                                  *  registered with its
+                                                  *  socket_id as key and its
+                                                  *  grouping or NULL if no
+                                                  *  grouping as value.
                                                   */
-    char                *ld_ongoing_grouping;   /**< track on going grouping
-                                                  * NULL if no ongoing grouping
-                                                  */
+    GHashTable          *ld_ongoing_partial_io_waiting_sync;
+        /**< Socket_id as key and a grouping or NULL as value. When a partial
+         * I/O is released, we transfer this partial IO from the
+         * ld_ongoing_io hash table to this one. When the sync is done, the
+         * partial goes back to the ld_ongoing_io hash table.
+         */
     atomic_bool          ld_needs_sync;         /**< medium needs to be sync */
     struct thread_info   ld_device_thread;      /**< thread handling the actions
                                                   * executed on the device
@@ -333,21 +338,28 @@ struct lrs_dev {
     struct dev_stats    stats; /**< exported device stats */
 };
 
+static inline void move_ongoing_io(GHashTable *from, GHashTable *into,
+                                   int socket_id)
+{
+    gpointer orig_socket_id;
+    gpointer orig_grouping;
+
+    assert(g_hash_table_lookup_extended(from, GINT_TO_POINTER(socket_id),
+                                        &orig_socket_id, &orig_grouping));
+    g_hash_table_steal(from, GINT_TO_POINTER(socket_id));
+    g_hash_table_insert(into, orig_socket_id, orig_grouping);
+}
+
 /**
- * Clean all ongoing IO values to acknowledge the end of the current IO
+ * Clean one ongoing IO
  *
  * Should be called with locked mutex on dev.
  */
-static inline void dev_clean_io(struct lrs_dev *dev, bool let_for_partial)
+static inline void dev_clean_io(struct lrs_dev *dev, int socket_id)
 {
-    dev->ld_ongoing_io = false;
-    if (!let_for_partial) {
-        dev->ld_ongoing_socket_id = -1;
-        if (dev->ld_ongoing_grouping) {
-            free(dev->ld_ongoing_grouping);
-            dev->ld_ongoing_grouping = NULL;
-        }
-    }
+    if (!g_hash_table_remove(dev->ld_ongoing_io, GINT_TO_POINTER(socket_id)))
+        g_hash_table_remove(dev->ld_ongoing_partial_io_waiting_sync,
+                            GINT_TO_POINTER(socket_id));
 }
 
 static inline bool dev_is_failed(struct lrs_dev *dev)
@@ -380,11 +392,17 @@ bool is_request_tosync_ended(struct req_container *req);
 void queue_release_response(struct tsqueue *response_queue,
                             struct req_container *reqc);
 
+static inline bool dev_has_ongoing_io(struct lrs_dev *dev)
+{
+    return g_hash_table_size(dev->ld_ongoing_io) ||
+           g_hash_table_size(dev->ld_ongoing_partial_io_waiting_sync);
+}
+
 static inline bool dev_is_sched_ready(struct lrs_dev *dev)
 {
     return dev && thread_is_running(&dev->ld_device_thread) &&
-           !dev->ld_ongoing_io && !dev->ld_needs_sync && !dev->ld_sub_request &&
-           !dev->ld_ongoing_scheduled &&
+           !dev_has_ongoing_io(dev) && !dev->ld_needs_sync &&
+           !dev->ld_sub_request && !dev->ld_ongoing_scheduled &&
            !dev_is_failed(dev) &&
            (dev->ld_dss_dev_info->rsc.adm_status == PHO_RSC_ADM_ST_UNLOCKED);
 }

@@ -101,7 +101,6 @@ void create_device(struct lrs_dev *dev, char *path, char *model,
 
     dev->ld_op_status = PHO_DEV_OP_ST_EMPTY;
     strcpy(dev->ld_dev_path, path);
-    dev->ld_ongoing_io = false;
     dev->ld_needs_sync = false;
     dev->ld_dss_media_info = NULL;
     dev->ld_device_thread.state = THREAD_RUNNING;
@@ -112,6 +111,10 @@ void create_device(struct lrs_dev *dev, char *path, char *model,
 
     dev->ld_dss_dev_info = xcalloc(1, sizeof(*dev->ld_dss_dev_info));
 
+    dev->ld_ongoing_io = g_hash_table_new_full(g_direct_hash, g_direct_equal,
+                                               NULL, g_free);
+    dev->ld_ongoing_partial_io_waiting_sync =
+        g_hash_table_new_full(g_direct_hash, g_direct_equal, NULL, g_free);
     dev->ld_sync_params.tosync_array = g_ptr_array_new();
 
     if (dss)
@@ -138,6 +141,8 @@ void cleanup_device(struct lrs_dev *dev)
     free(dev->ld_dss_dev_info);
     free(dev->ld_sys_dev_state.lds_model);
     free(dev->ld_sys_dev_state.lds_serial);
+    g_hash_table_unref(dev->ld_ongoing_io);
+    g_hash_table_unref(dev->ld_ongoing_partial_io_waiting_sync);
     g_ptr_array_free(dev->ld_sync_params.tosync_array, true);
 }
 

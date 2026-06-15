@@ -158,7 +158,7 @@ static void dev_picker_one_booked_device(void **data)
     create_device(&device, "test", LTO5_MODEL, NULL);
     gptr_array_from_list(devices, &device, 1, sizeof(device));
 
-    device.ld_ongoing_io = true;
+    g_hash_table_insert(device.ld_ongoing_io, GINT_TO_POINTER(42), NULL);
 
     dev = dev_picker(devices, NULL, PHO_DEV_OP_ST_UNSPEC, NULL, NULL,
                      select_empty_loaded_mount, 0, &NO_STRING, NULL, false,
@@ -182,7 +182,7 @@ static void dev_picker_one_booked_device_one_available(void **data)
 
     gptr_array_from_list(devices, &device, 2, sizeof(device[0]));
 
-    device[0].ld_ongoing_io = true;
+    g_hash_table_insert(device[0].ld_ongoing_io, GINT_TO_POINTER(42), NULL);
 
     dev = dev_picker(devices, NULL, PHO_DEV_OP_ST_UNSPEC, NULL, NULL,
                      select_empty_loaded_mount, 0, &NO_STRING, NULL, false,
@@ -225,7 +225,7 @@ static void dev_picker_search_mounted(void **data)
     create_medium(&medium, "test");
     mount_medium(&device[1], &medium);
 
-    device[0].ld_ongoing_io = true;
+    g_hash_table_insert(device[0].ld_ongoing_io, GINT_TO_POINTER(42), NULL);
 
     dev = dev_picker(devices, NULL, PHO_DEV_OP_ST_MOUNTED, NULL, NULL,
                      select_empty_loaded_mount, 0, &NO_STRING, NULL, false,
@@ -234,7 +234,7 @@ static void dev_picker_search_mounted(void **data)
     assert_non_null(dev);
     assert_string_equal(dev->ld_dev_path, "test2");
 
-    device[0].ld_ongoing_io = false;
+    g_hash_table_remove_all(device[0].ld_ongoing_io);
     dev->ld_ongoing_scheduled = true;
     dev = dev_picker(devices, NULL, PHO_DEV_OP_ST_MOUNTED, NULL, NULL,
                      select_empty_loaded_mount, 0, &NO_STRING, NULL, false,
@@ -269,7 +269,7 @@ static void dev_picker_search_loaded(void **data)
     create_medium(&medium, "test");
     mount_medium(&device[1], &medium);
 
-    device[0].ld_ongoing_io = true;
+    g_hash_table_insert(device[0].ld_ongoing_io, GINT_TO_POINTER(42), NULL);
 
     dev = dev_picker(devices, NULL, PHO_DEV_OP_ST_LOADED, NULL, NULL,
                      select_empty_loaded_mount, 0, &NO_STRING, NULL, false,
@@ -285,7 +285,7 @@ static void dev_picker_search_loaded(void **data)
     assert_true(one_device_available);
     assert_null(dev);
 
-    device[0].ld_ongoing_io = false;
+    g_hash_table_remove_all(device[0].ld_ongoing_io);
 
     dev = dev_picker(devices, NULL, PHO_DEV_OP_ST_LOADED, NULL, NULL,
                      select_empty_loaded_mount, 0, &NO_STRING, NULL, false,
@@ -367,7 +367,7 @@ static void dev_picker_flags(void **data)
 
     gptr_array_from_list(devices, &device, 2, sizeof(device[0]));
 
-    device[0].ld_ongoing_io = true;
+    g_hash_table_insert(device[0].ld_ongoing_io, GINT_TO_POINTER(42), NULL);
     device[1].ld_dss_media_info->flags.put = false;
     dev = dev_picker(devices, NULL, PHO_DEV_OP_ST_MOUNTED, NULL, NULL,
                      select_first_fit, 0, &NO_STRING, NULL, true, NULL, false,
@@ -937,8 +937,8 @@ static void io_sched_one_medium_no_device_available(void **data)
     assert_non_null(new_reqc);
 
     /* device already used */
-    devices[0].ld_ongoing_io = true;
-    devices[1].ld_ongoing_io = true;
+    g_hash_table_insert(devices[0].ld_ongoing_io, GINT_TO_POINTER(42), NULL);
+    g_hash_table_insert(devices[1].ld_ongoing_io, GINT_TO_POINTER(42), NULL);
 
     index = 0;
     rc = io_sched_get_device_medium_pair(io_sched, &reqc, &dev, &index);

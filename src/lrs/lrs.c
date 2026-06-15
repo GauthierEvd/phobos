@@ -290,7 +290,7 @@ static void notify_device_request_is_canceled(struct resp_container *respc)
 
     for (i = 0; i < respc->devices_len; i++) {
         MUTEX_LOCK(&respc->devices[i]->ld_mutex);
-        dev_clean_io(respc->devices[i], false);
+        dev_clean_io(respc->devices[i], respc->socket_id);
         MUTEX_UNLOCK(&respc->devices[i]->ld_mutex);
     }
 }
@@ -650,7 +650,13 @@ static int release_medium(struct lrs_sched *sched,
         push_new_sync_to_device(dev, reqc, medium_index);
 
     /* Acknowledgement of the request */
-    dev_clean_io(dev, reqc->req->release->partial);
+    if (!reqc->req->release->partial)
+        dev_clean_io(dev, reqc->socket_id);
+    else
+        move_ongoing_io(dev->ld_ongoing_io,
+                        dev->ld_ongoing_partial_io_waiting_sync,
+                        reqc->socket_id);
+
     MUTEX_UNLOCK(&dev->ld_mutex);
 
     return rc;
@@ -933,8 +939,7 @@ static void release_on_socket_close(struct lrs *lrs, int closed_fd)
              */
             dev = g_ptr_array_index(devices, i);
             MUTEX_LOCK(&dev->ld_mutex);
-            if (dev->ld_ongoing_io && dev->ld_ongoing_socket_id == closed_fd)
-                dev_clean_io(dev, false);
+                dev_clean_io(dev, closed_fd);
             MUTEX_UNLOCK(&dev->ld_mutex);
         }
 

@@ -858,8 +858,8 @@ bool sched_has_running_devices(struct lrs_sched *sched)
 
         dev = lrs_dev_hdl_get(&sched->devices, i);
         MUTEX_LOCK(&dev->ld_mutex);
-        if (dev->ld_ongoing_io || dev->ld_needs_sync || dev->ld_sub_request ||
-            dev->ld_sync_params.tosync_array->len ||
+        if (dev_has_ongoing_io(dev) || dev->ld_needs_sync ||
+            dev->ld_sub_request || dev->ld_sync_params.tosync_array->len ||
             dev->ld_ongoing_scheduled) {
             MUTEX_UNLOCK(&dev->ld_mutex);
             return true;
@@ -1444,8 +1444,8 @@ struct lrs_dev *dev_picker(GPtrArray *devices,
         struct lrs_dev *prev = selected;
 
         MUTEX_LOCK(&itr->ld_mutex);
-        if (itr->ld_ongoing_io || itr->ld_needs_sync || itr->ld_sub_request ||
-            itr->ld_ongoing_scheduled) {
+        if (dev_has_ongoing_io(itr) || itr->ld_needs_sync ||
+            itr->ld_sub_request || itr->ld_ongoing_scheduled) {
             pho_debug("Skipping busy device '%s'", itr->ld_dev_path);
             goto unlock_continue;
         }
@@ -2750,7 +2750,7 @@ void rwalloc_cancel_DONE_devices(struct req_container *reqc)
 
             MUTEX_LOCK(&respc->devices[i]->ld_mutex);
             reqc->params.rwalloc.media[i].status = SUB_REQUEST_CANCEL;
-            dev_clean_io(respc->devices[i], false);
+            dev_clean_io(respc->devices[i], reqc->socket_id);
             MUTEX_UNLOCK(&respc->devices[i]->ld_mutex);
             respc->devices[i] = NULL;
             if (is_write) {
@@ -3047,7 +3047,7 @@ static void sched_fetch_device_status(struct lrs_dev *device,
         json_decref(integer);
     }
 
-    ongoing_io = json_boolean(device->ld_ongoing_io);
+    ongoing_io = json_boolean(dev_has_ongoing_io(device));
     if (ongoing_io) {
         json_object_set(device_status, "ongoing_io", ongoing_io);
         json_decref(ongoing_io);
