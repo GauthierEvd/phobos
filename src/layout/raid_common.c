@@ -105,6 +105,90 @@ int raid_get_nb_extent_to_rebuild(struct pho_data_processor *rebuilder)
     return (nb_split * nb_extent_per_split) - layout->ext_count;
 }
 
+/** Return the extent with the corresponding layout_idx or NULL */
+static struct extent *extent_from_layout_idx(struct extent *extents,
+                                             int ext_count, int layout_idx)
+{
+    int i;
+
+    for (i = 0; i < ext_count; i++)
+        if (extents[i].layout_idx == layout_idx)
+            return &extents[i];
+
+    return NULL;
+}
+
+/** Number of extent in src layout corresponding to the current split */
+static size_t split_src_layout_n_extent(struct layout_info *layout,
+                                        size_t current_split,
+                                        size_t n_extents_per_split)
+{
+    size_t n_extent = 0;
+    int idx;
+
+    for (idx = current_split * n_extents_per_split;
+         idx < (current_split + 1) * n_extents_per_split;
+         idx++)
+        if (extent_from_layout_idx(layout->extents, layout->ext_count, idx))
+            n_extent++;
+
+    return n_extent;
+}
+
+bool rebuilder_validate_extent_list(struct pho_data_processor *proc,
+                                    size_t n_data_extents,
+                                    size_t n_parity_extents)
+{
+    size_t n_extents_per_split = n_data_extents + n_parity_extents;
+    struct layout_info *layout = proc->src_layout;
+    size_t current_split = 0;
+    const int *extents_idx;
+    size_t max_layout_idx;
+    size_t n_extents_idx;
+
+    extents_idx = proc->xfer->xd_params.rebuild.extents_idx;
+    n_extents_idx = proc->xfer->xd_params.rebuild.n_extents;
+
+    max_layout_idx = layout->extents[layout->ext_count - 1].layout_idx;
+
+    while (current_split * n_extents_per_split <= max_layout_idx) {
+        size_t first_layout_idx = current_split * n_extents_per_split;
+        size_t first_excluded_idx = (current_split + 1) * n_extents_per_split;
+        size_t found = 0;
+        size_t present;
+
+        present = split_src_layout_n_extent(layout, current_split,
+                                            n_data_extents + n_parity_extents);
+
+        for (int i = 0; i < n_extents_idx; i++) {
+            if (extents_idx[i] >= first_layout_idx &&
+                extents_idx[i] < first_excluded_idx) {
+                found++;
+
+                /*
+                 * If only the data extents remain in this split, they cannot
+                 * be rebuilt because they are required as reconstruction input.
+                 */
+                if (present == n_data_extents &&
+                    extent_from_layout_idx(layout->extents, layout->ext_count,
+                                           extents_idx[i]))
+                    return false;
+            }
+        }
+
+        /*
+         * A split cannot rebuild more extents than its available parity
+         * extents.
+         */
+        if (found > n_parity_extents)
+            return false;
+
+        current_split++;
+    }
+
+    return true;
+}
+
 static void free_extent_address_buff(void *void_extent)
 {
     struct extent *extent = void_extent;
@@ -587,37 +671,16 @@ static inline int64_t priority_from_ctime(struct timeval copy_ctime)
             (int64_t)copy_ctime.tv_usec);
 }
 
-/** Return the extent with the corresponding layout_idx or NULL */
-static struct extent *extent_from_layout_idx(struct extent *extents,
-                                             int ext_count, int layout_idx)
-{
-    int i;
-
-    for (i = 0; i < ext_count; i++)
-        if (extents[i].layout_idx == layout_idx)
-            return &extents[i];
-
-    return NULL;
-}
-
-/** Number of extent in src layout corresponding to the current split */
 static size_t current_split_src_layout_n_extent(struct pho_data_processor *proc,
                                                 enum processor_type type)
 {
     struct raid_io_context *io_context =
         io_context_from_proc(proc, proc->current_target, type);
     size_t n_extents_per_split = n_total_extents(io_context);
-    size_t n_extent = 0;
-    int idx;
 
-    for (idx = io_context->current_split * n_extents_per_split;
-         idx < (io_context->current_split + 1) * n_extents_per_split;
-         idx++)
-        if (extent_from_layout_idx(proc->src_layout->extents,
-                                   proc->src_layout->ext_count, idx))
-            n_extent++;
-
-    return n_extent;
+    return split_src_layout_n_extent(proc->src_layout,
+                                     io_context->current_split,
+                                     n_extents_per_split);
 }
 
 static size_t current_split_rebuild_n_extent(struct pho_data_processor *proc,

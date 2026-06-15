@@ -312,8 +312,10 @@ static int decoder_build(struct dss_handle *dss, struct pho_xfer_desc *xfer,
     }
 
 err:
-    if (rc)
+    if (rc) {
         dss_res_free(layout, cnt);
+        decoder->src_layout = NULL;
+    }
 
     return rc;
 }

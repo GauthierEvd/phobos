@@ -265,6 +265,12 @@ static int layout_raid4_rebuild(struct pho_data_processor *rebuilder)
 
     ENTRY;
 
+    if (rebuilder->xfer->xd_params.rebuild.n_extents > 0 &&
+        !rebuilder_validate_extent_list(rebuilder, 2, 1)) {
+        pho_error(-EINVAL, "The list of extents to rebuild is invalid.");
+        return -EINVAL;
+    }
+
     io_context = xcalloc(1, sizeof(*io_context));
     rebuilder->private_writer = io_context;
     io_context->name = PLUGIN_NAME;

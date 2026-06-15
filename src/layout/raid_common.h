@@ -261,4 +261,8 @@ size_t get_n_extents(struct raid_io_context *io_context,
 
 int raid_get_nb_extent_to_rebuild(struct pho_data_processor *rebuilder);
 
+bool rebuilder_validate_extent_list(struct pho_data_processor *proc,
+                                    size_t n_data_extents,
+                                    size_t n_parity_extents);
+
 #endif
