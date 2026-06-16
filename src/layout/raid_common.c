@@ -360,7 +360,7 @@ static void writer_release_alloc_destroy(struct pho_data_processor *proc)
 void raid_reader_processor_destroy(struct pho_data_processor *proc)
 {
     struct raid_io_context *io_context;
-    int i, j;
+    int i;
 
     for (i = 0; i < proc->xfer->xd_ntargets; i++) {
         io_context = &((struct raid_io_context *) proc->private_reader)[i];
@@ -371,10 +371,6 @@ void raid_reader_processor_destroy(struct pho_data_processor *proc)
         read_resp_destroy(&io_context->read);
         free(io_context->read.extents);
         free(io_context->iods);
-
-        for (j = 0; j < io_context->nb_hashes; j++)
-            extent_hash_fini(&io_context->hashes[j]);
-
         free(io_context->hashes);
     }
 
@@ -1215,6 +1211,7 @@ static int raid_reader_split_setup(struct pho_data_processor *proc,
                             "Expected %lu, got %lu",
                    io_context->n_data_extents, n_media);
 
+    read_resp_destroy(&io_context->read);
     io_context->read.resp = copy_response_read_alloc(resp);
 
     /* identify extents corresponding to received media */
@@ -1289,6 +1286,7 @@ static int raid_reader_split_setup(struct pho_data_processor *proc,
             rc = extent_hash_init(&io_context->hashes[i],
                                   io_context->read.extents[i]->with_md5,
                                   io_context->read.extents[i]->with_xxh128);
+
             if (rc)
                 goto close_iod;
 
@@ -1337,6 +1335,8 @@ static int raid_reader_split_fini(struct pho_data_processor *proc)
                                      io_context->read.extents[i]);
             if (rc)
                 return rc;
+
+            extent_hash_fini(&io_context->hashes[i]);
         }
     }
 

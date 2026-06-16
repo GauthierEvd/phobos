@@ -36,7 +36,7 @@ function setup
     setup_test_dirs
 
     INPUT_FILE="$DIR_TEST/file"
-    dd if=/dev/urandom of="$INPUT_FILE" bs=64K count=1
+    dd if=/dev/urandom of="$INPUT_FILE" bs=1K count=64
 
     DIRS=(
           $(mktemp -d "$DIR_TEST/test_pho.XXXX")
@@ -53,15 +53,27 @@ function setup
     $phobos dir format --unlock ${DIRS[@]}
 }
 
-function setup_fs
+function setup_split
 {
+    local layout=$1
+    local count
+
     setup_tables
     setup_test_dirs
 
     INPUT_FILE="$DIR_TEST/file"
-    dd if=/dev/urandom of="$INPUT_FILE" bs=64K count=1
+    if [[ $layout == "raid1" ]]; then
+        count=1025
+    else
+        count=2049
+    fi
+
+    dd if=/dev/urandom of="$INPUT_FILE" bs=1K count=$count
 
     DIRS=(
+          $(make_tmp_fs 1M)
+          $(make_tmp_fs 1M)
+          $(make_tmp_fs 1M)
           $(make_tmp_fs 1M)
           $(make_tmp_fs 1M)
           $(make_tmp_fs 1M)
@@ -82,7 +94,7 @@ function cleanup
     drop_tables
 }
 
-function cleanup_fs
+function cleanup_split
 {
     waive_lrs
 
@@ -162,6 +174,84 @@ function test_rebuild_extent_list_raid1
     fi
 }
 
+function test_rebuild_extent_list_raid1_split
+{
+    $phobos put -f dir -l raid1 --lyt-params=repl_count=3 $INPUT_FILE oid
+
+    local extents_before=($(get_extent_info oid source ext_uuid))
+    local hash_before=($(get_extent_info oid source xxh128))
+
+    waive_lrs
+    local media=($(get_extent_info oid source media_name))
+    $phobos dir del --lost ${media[0]} ${media[3]}
+    invoke_lrs
+
+    $LOG_COMPILER $test_bin oid source 1
+
+    local extents_after=($(get_extent_info oid source ext_uuid))
+    local hash_after=($(get_extent_info oid source xxh128))
+    local count=$($phobos extent list -o ext_count)
+    if [[ $count -ne 4 ]]; then
+        error "oid should have only 4 extents, got $count"
+    fi
+
+    if [[ ${extents_after[0]} == ${extents_before[1]} ]]; then
+        error "Extent 1 should have be rebuilt"
+    fi
+
+    if [[ ${hash_after[0]} != ${hash_before[1]} ]]; then
+        error "Rebuilt extent 1 should have the same content"
+    fi
+
+    if [[ ! -z $(get_extent 0) && ! -z $(get_extent 3) ]]; then
+        error "Extent 0 and 3 shouldn't be rebuilt"
+    fi
+
+    $LOG_COMPILER $test_bin oid source 4
+
+    extents_after=($(get_extent_info oid source ext_uuid))
+    hash_after=($(get_extent_info oid source xxh128))
+    count=$($phobos extent list -o ext_count)
+    if [[ $count -ne 4 ]]; then
+        error "oid should have only 4 extents, got $count"
+    fi
+
+    if [[ ${extents_after[2]} == ${extents_before[4]} ]]; then
+        error "Extent 4 should have be rebuilt"
+    fi
+
+    if [[ ${hash_after[2]} != ${hash_before[4]} ]]; then
+        error "Rebuilt extent 4 should have the same content"
+    fi
+
+    if [[ ! -z $(get_extent 0) && ! -z $(get_extent 3) ]]; then
+        error "Extent 0 and 3 shouldn't be rebuilt"
+    fi
+
+    $LOG_COMPILER $test_bin oid source 2 5
+
+    extents_after=($(get_extent_info oid source ext_uuid))
+    hash_after=($(get_extent_info oid source xxh128))
+    count=$($phobos extent list -o ext_count)
+    if [[ $count -ne 4 ]]; then
+        error "oid should have only 4 extents, got $count"
+    fi
+
+    if [[ ${extents_after[1]} == ${extents_before[2]} ||
+          ${extents_after[3]} == ${extents_before[5]} ]]; then
+        error "Extent 2 and 5 should have be rebuilt"
+    fi
+
+    if [[ ${hash_after[1]} != ${hash_before[2]} ||
+          ${hash_after[3]} != ${hash_before[5]} ]]; then
+        error "Rebuilt extent 2 and 5 should have the same content"
+    fi
+
+    if [[ ! -z $(get_extent 0) && ! -z $(get_extent 3) ]]; then
+        error "Extent 0 and 3 shouldn't be rebuilt"
+    fi
+}
+
 function test_rebuild_extent_list_raid4
 {
     $phobos put -f dir -l raid4 $INPUT_FILE oid2
@@ -189,44 +279,101 @@ function test_rebuild_extent_list_raid4
     fi
 }
 
-# XXX: test with split
-function test_extent_list_raid1_invalid
+function test_rebuild_extent_list_raid4_split
+{
+    $phobos put -f dir -l raid4 $INPUT_FILE oid
+
+    local extents_before=($(get_extent_info oid source ext_uuid))
+    local hash_before=($(get_extent_info oid source xxh128))
+
+    $LOG_COMPILER $test_bin oid source 1
+
+    local extents_after=($(get_extent_info oid source ext_uuid))
+    local hash_after=($(get_extent_info oid source xxh128))
+    local count=$($phobos extent list -o ext_count)
+    if [[ $count -ne 6 ]]; then
+        error "oid should have only 6 extents, got $count"
+    fi
+
+    if [[ ${extents_after[1]} == ${extents_before[1]} ]]; then
+        error "Extent 1 should have be rebuilt"
+    fi
+
+    if [[ ${hash_after[1]} != ${hash_before[1]} ]]; then
+        error "Rebuilt extent 1 should have the same content"
+    fi
+
+    $LOG_COMPILER $test_bin oid source 4
+
+    extents_after=($(get_extent_info oid source ext_uuid))
+    hash_after=($(get_extent_info oid source xxh128))
+
+    if [[ ${extents_after[4]} == ${extents_before[4]} ]]; then
+        error "Extent 4 should have be rebuilt"
+    fi
+
+    if [[ ${hash_after[4]} != ${hash_before[4]} ]]; then
+        error "Rebuilt extent 4 should have the same content"
+    fi
+
+    $LOG_COMPILER $test_bin oid source 2 5
+
+    extents_after=($(get_extent_info oid source ext_uuid))
+    hash_after=($(get_extent_info oid source xxh128))
+
+    if [[ ${extents_after[2]} == ${extents_before[2]} ||
+          ${extents_after[5]} == ${extents_before[5]} ]]; then
+        error "Extent 2 and 5 should have be rebuilt"
+    fi
+
+    if [[ ${hash_after[2]} != ${hash_before[2]} ||
+          ${hash_after[5]} != ${hash_before[5]} ]]; then
+        error "Rebuilt extent 2 and 5 should have the same content"
+    fi
+}
+
+function test_rebuild_extent_list_raid1_invalid
 {
     $phobos put -f dir -l raid1 --lyt-params=repl_count=2 $INPUT_FILE oid
 
     # Check that we cannot ask to rebuild all the extents of a split
     $LOG_COMPILER $test_bin oid source 0 1 && error "rebuild should have failed"
+    $LOG_COMPILER $test_bin oid source 2 3 && error "rebuild should have failed"
 
     waive_lrs
     local media=($(get_extent_info oid source media_name))
-    $phobos dir del --lost ${media[0]}
+    $phobos dir del --lost ${media[0]} ${media[2]}
     invoke_lrs
 
     # Check that we cannot ask to rebuild the last data extent if we have no
     # parity extents left
     $LOG_COMPILER $test_bin oid source 1 && error "rebuild should have failed"
+    $LOG_COMPILER $test_bin oid source 3 && error "rebuild should have failed"
 
     return 0
 }
 
-function test_extent_list_raid4_invalid
+function test_rebuild_extent_list_raid4_invalid
 {
-    $phobos put -f dir -l raid4 $INPUT_FILE oid2
+    $phobos put -f dir -l raid4 $INPUT_FILE oid
 
     # Check that we cannot ask to rebuild all the extents of a split
-    $LOG_COMPILER $test_bin oid2 source 0 1 2 &&
+    $LOG_COMPILER $test_bin oid source 0 1 2 &&
+        error "rebuild should have failed"
+    $LOG_COMPILER $test_bin oid source 3 4 5 &&
         error "rebuild should have failed"
 
     waive_lrs
     local media=($(get_extent_info oid source media_name))
-    $phobos dir del --lost ${media[0]}
+    $phobos dir del --lost ${media[0]} ${media[3]}
     invoke_lrs
 
     # Check that we cannot ask to rebuild one data extent if we have no
     # parity extents left
     $LOG_COMPILER $test_bin oid source 1 && error "rebuild should have failed"
-
     $LOG_COMPILER $test_bin oid source 1 2 && error "rebuild should have failed"
+    $LOG_COMPILER $test_bin oid source 4 && error "rebuild should have failed"
+    $LOG_COMPILER $test_bin oid source 4 5 && error "rebuild should have failed"
 
     return 0
 }
@@ -265,9 +412,21 @@ TESTS=("setup; \
             test_rebuild_extent_list_raid1; \
             test_rebuild_extent_list_raid4; \
         cleanup"
-       "setup; \
-            test_extent_list_raid1_invalid; \
-            test_extent_list_raid4_invalid; \
-        cleanup"
-       "setup_fs; test_rebuild_avoid_extent_to_rebuild raid1; cleanup_fs"
-       "setup_fs; test_rebuild_avoid_extent_to_rebuild raid4; cleanup_fs")
+       "setup_split raid1; \
+            test_rebuild_extent_list_raid1_invalid; \
+        cleanup_split"
+       "setup_split raid4; \
+            test_rebuild_extent_list_raid4_invalid; \
+        cleanup_split"
+       "setup_split raid1; \
+            test_rebuild_extent_list_raid1_split; \
+        cleanup_split"
+       "setup_split raid4; \
+            test_rebuild_extent_list_raid4_split; \
+        cleanup_split"
+       "setup_split raid1; \
+            test_rebuild_avoid_extent_to_rebuild raid1; \
+        cleanup_split"
+       "setup_split raid4; \
+            test_rebuild_avoid_extent_to_rebuild raid4; \
+        cleanup_split")
