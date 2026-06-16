@@ -53,9 +53,43 @@ function setup
     $phobos dir format --unlock ${DIRS[@]}
 }
 
+function setup_fs
+{
+    setup_tables
+    setup_test_dirs
+
+    INPUT_FILE="$DIR_TEST/file"
+    dd if=/dev/urandom of="$INPUT_FILE" bs=64K count=1
+
+    DIRS=(
+          $(make_tmp_fs 1M)
+          $(make_tmp_fs 1M)
+          $(make_tmp_fs 1M)
+          $(make_tmp_fs 1M)
+          $(make_tmp_fs 1M)
+          $(make_tmp_fs 1M)
+         )
+
+    invoke_lrs
+    $phobos dir add ${DIRS[@]}
+    $phobos dir format --unlock ${DIRS[@]}
+}
+
 function cleanup
 {
     waive_lrs
+    cleanup_test_dirs
+    drop_tables
+}
+
+function cleanup_fs
+{
+    waive_lrs
+
+    for dir in ${DIRS[@]}; do
+        cleanup_tmp_fs "$dir"
+    done
+
     cleanup_test_dirs
     drop_tables
 }
@@ -155,7 +189,85 @@ function test_rebuild_extent_list_raid4
     fi
 }
 
+# XXX: test with split
+function test_extent_list_raid1_invalid
+{
+    $phobos put -f dir -l raid1 --lyt-params=repl_count=2 $INPUT_FILE oid
+
+    # Check that we cannot ask to rebuild all the extents of a split
+    $LOG_COMPILER $test_bin oid source 0 1 && error "rebuild should have failed"
+
+    waive_lrs
+    local media=($(get_extent_info oid source media_name))
+    $phobos dir del --lost ${media[0]}
+    invoke_lrs
+
+    # Check that we cannot ask to rebuild the last data extent if we have no
+    # parity extents left
+    $LOG_COMPILER $test_bin oid source 1 && error "rebuild should have failed"
+
+    return 0
+}
+
+function test_extent_list_raid4_invalid
+{
+    $phobos put -f dir -l raid4 $INPUT_FILE oid2
+
+    # Check that we cannot ask to rebuild all the extents of a split
+    $LOG_COMPILER $test_bin oid2 source 0 1 2 &&
+        error "rebuild should have failed"
+
+    waive_lrs
+    local media=($(get_extent_info oid source media_name))
+    $phobos dir del --lost ${media[0]}
+    invoke_lrs
+
+    # Check that we cannot ask to rebuild one data extent if we have no
+    # parity extents left
+    $LOG_COMPILER $test_bin oid source 1 && error "rebuild should have failed"
+
+    $LOG_COMPILER $test_bin oid source 1 2 && error "rebuild should have failed"
+
+    return 0
+}
+
+function test_rebuild_avoid_extent_to_rebuild
+{
+    local repl_count
+    local layout=$1
+
+    if [[ $layout == "raid1" ]]; then
+        $phobos put -f dir -l raid1 --lyt-params=repl_count=2 $INPUT_FILE oid
+        repl_count=2
+    else
+        $phobos put -f dir -l raid4 $INPUT_FILE oid
+        repl_count=3
+    fi
+
+    for i in $(seq 0 $(($repl_count - 1))); do
+        local media=($(get_extent_info oid source media_name))
+
+        # Create an I/O error on the medium where the extent to rebuild is.
+        # If this medium is used, the rebuild should failed
+        make_tmp_fs_fail_io ${media[$i]}
+
+        $LOG_COMPILER $test_bin oid source $i
+
+        # We delete the medium where the rebuilt extent was to avoid using it
+        # for the next rebuild.
+        waive_lrs
+        $phobos dir del --lost ${media[$i]}
+        invoke_lrs
+    done
+}
+
 TESTS=("setup; \
             test_rebuild_extent_list_raid1; \
             test_rebuild_extent_list_raid4; \
-        cleanup")
+        cleanup"
+       "setup; \
+            test_extent_list_raid1_invalid; \
+            test_extent_list_raid4_invalid; \
+        cleanup"
+       "setup_fs; test_rebuild_avoid_extent_to_rebuild raid1; cleanup_fs"
+       "setup_fs; test_rebuild_avoid_extent_to_rebuild raid4; cleanup_fs")

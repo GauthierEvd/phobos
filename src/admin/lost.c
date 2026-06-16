@@ -31,10 +31,10 @@
 
 static int get_layout_from_extent(struct dss_handle *dss,
                                   struct extent *extent,
-                                  struct layout_info **layout)
+                                  struct layout_info **layout,
+                                  int *layout_count)
 {
     struct dss_filter filter;
-    int layout_count;
     int rc;
 
     rc = dss_filter_build(&filter, "{\"DSS::LYT::extent_uuid\": \"%s\"}",
@@ -42,14 +42,14 @@ static int get_layout_from_extent(struct dss_handle *dss,
     if (rc)
         LOG_RETURN(rc, "Failed to build filter for layout retrieval");
 
-    rc = dss_layout_get(dss, &filter, layout, &layout_count);
+    rc = dss_layout_get(dss, &filter, layout, layout_count);
     dss_filter_free(&filter);
 
     /* /!\ This works if there is no deduplication on the target extent. If the
      * same extent is used by multiple layouts (because of deduplication), this
      * assert will fail.
      */
-    assert(layout_count == 1);
+    assert(*layout_count == 1 || *layout_count == 0);
 
     return rc;
 }
@@ -79,14 +79,20 @@ int delete_media_and_extents(struct admin_handle *handle,
         for (j = 0; j < extent_count; j++) {
             struct layout_info *layout;
             struct copy_info copy;
+            int layout_count;
 
-            rc2 = get_layout_from_extent(&handle->dss, &extents[j], &layout);
+            rc2 = get_layout_from_extent(&handle->dss, &extents[j], &layout,
+                                         &layout_count);
             if (rc2) {
                 pho_error(rc2,
                           "Failed to get layout associated with extent '%s'",
                           extents[j].uuid);
                 goto free_layout;
             }
+
+            /* If the extent is ORPHAN, there is no layout associated */
+            if (layout_count == 0)
+                goto free_layout;
 
             copy.object_uuid = layout->uuid;
             copy.version = layout->version;
@@ -107,7 +113,7 @@ int delete_media_and_extents(struct admin_handle *handle,
                           layout->copy_name, layout->oid);
 
 free_layout:
-            dss_res_free(layout, 1);
+            dss_res_free(layout, layout_count);
             if (rc2)
                 goto set_rc_and_continue;
         }

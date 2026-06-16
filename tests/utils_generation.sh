@@ -70,12 +70,39 @@ function make_tmp_fs()
 
     losetup $loop_device $file_path
 
-    mkfs.ext4 $loop_device >/dev/null 2>&1
+    sectors=$(blockdev --getsz $loop_device)
+    dm_name="tmpfs_$(basename $mount_point)"
+    fs_device="/dev/mapper/$dm_name"
+
+    dmsetup create "$dm_name" --table "0 $sectors linear $loop_device 0"
+
+    printf '%s\n%s\n' "$loop_device" "$file_path" > "/tmp/${dm_name}.state"
+
+    mkfs.ext4 $fs_device >/dev/null 2>&1
 
     mkdir -p $mount_point
-    mount $loop_device $mount_point
+    mount $fs_device $mount_point
 
     echo $mount_point
+}
+
+function make_tmp_fs_fail_io()
+{
+    local mount_point=$1
+    local fs_device
+    local dm_name
+    local sectors
+
+    fs_device=$(findmnt -n -o SOURCE --target "$mount_point")
+    dm_name=$(dmsetup info -C --noheadings -o name "$fs_device" |
+              awk '{$1=$1; print}')
+    sectors=$(blockdev --getsz "$fs_device")
+
+    echo 3 > /proc/sys/vm/drop_caches
+
+    dmsetup suspend "$dm_name"
+    dmsetup reload "$dm_name" --table "0 $sectors error"
+    dmsetup resume "$dm_name"
 }
 
 cleanup_tmp_fs()
@@ -84,19 +111,19 @@ cleanup_tmp_fs()
     local loop_device=$(df $mount_point | tail -n 1 | awk '{print $1}')
     local back_file
 
-    set +e
-    back_file=$(losetup -l -O BACK-FILE $loop_device)
-    local rc=$?
-    set -e
+    fs_device=$(findmnt -n -o SOURCE --target "$mount_point")
+    dm_name=$(dmsetup info -C --noheadings -o name "$fs_device" |
+              awk '{$1=$1; print}')
+    state_file="/tmp/${dm_name}.state"
 
-    if ((rc != 0)); then
-        skip
-    fi
-
-    back_file=$(echo "$back_file" | tail -n 1)
+    loop_device=$(sed -n '1p' "$state_file")
+    back_file=$(sed -n '2p' "$state_file")
 
     umount $mount_point
     rmdir $mount_point
+
+    dmsetup remove "$dm_name"
     losetup -d $loop_device
-    rm $back_file
+    rm -f $back_file
+    rm -f $state_file
 }
