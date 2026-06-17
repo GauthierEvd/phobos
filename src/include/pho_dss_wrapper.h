@@ -318,4 +318,20 @@ int dss_get_living_and_deprecated_objects(struct dss_handle *handle,
                                           struct object_info **objs,
                                           int *n_objs);
 
+/**
+ * Retrieve full layout information for copies with at least one extent on
+ * a medium.
+ *
+ * @param[in]  handle       DSS handle
+ * @param[in]  filter       assembled DSS filtering criteria
+ * @param[out] layouts      list of retrieved layouts
+ * @param[out] layout_count number of layouts retrieved
+ *
+ * @return 0 on success, negated errno on failure
+ */
+int dss_get_full_layout_from_medium(struct dss_handle *handle,
+                                    const struct dss_filter *filter,
+                                    struct layout_info **layouts,
+                                    int *layout_count);
+
 #endif

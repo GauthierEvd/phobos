@@ -3013,8 +3013,8 @@ int phobos_admin_media_rebuild(struct admin_handle *adm, struct media_info *med,
         if (rc)
             return rc;
 
-        rc = dss_full_layout_get(&adm->dss, NULL, &filter, &layouts, &n_layout,
-                                 NULL);
+        rc = dss_get_full_layout_from_medium(&adm->dss, &filter,
+                                             &layouts, &n_layout);
         dss_filter_free(&filter);
         if (rc) {
             pho_error(rc, "Cannot fetch layouts for "FMT_PHO_ID,

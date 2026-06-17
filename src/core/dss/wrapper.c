@@ -971,3 +971,57 @@ out:
 
     return rc;
 }
+
+int dss_get_full_layout_from_medium(struct dss_handle *handle,
+                                    const struct dss_filter *filter,
+                                    struct layout_info **layouts,
+                                    int *layout_count)
+{
+    GString *request;
+    GString *clause;
+    int rc = 0;
+
+    /* Limit this memory setting to the current transaction. */
+    request = g_string_new("BEGIN;");
+    clause = g_string_new(NULL);
+
+    rc = clause_filter_convert(handle, clause, filter);
+    if (rc)
+        goto out;
+
+    g_string_append_printf(request,
+        "SELECT o.oid, c.object_uuid, c.version, c.lyt_info, c.copy_name,"
+        "       le.extents"
+        " FROM ("
+        "  SELECT l.object_uuid, l.version, l.copy_name,"
+        "        json_agg(json_build_object('extent_uuid', e.extent_uuid,"
+        "                 'sz', e.size, 'offsetof', e.offsetof,"
+        "                 'fam', e.medium_family, 'state', e.state,"
+        "                 'media', e.medium_id, 'library', e.medium_library,"
+        "                 'addr', e.address, 'hash', e.hash, 'info', e.info,"
+        "                 'lyt_index', l.layout_index,"
+        "                 'creation_time', e.creation_time"
+        "   ) ORDER BY l.layout_index) AS extents"
+        "   FROM ( SELECT l.object_uuid, l.version, l.copy_name"
+        "          FROM extent e"
+        "            JOIN layout l USING (extent_uuid) %s ) AS groups_on_medium"
+        "   JOIN layout l USING (object_uuid, version, copy_name)"
+        "   JOIN extent e USING (extent_uuid)"
+        "   GROUP BY l.object_uuid, l.version, l.copy_name"
+        " ) AS le"
+        " JOIN copy c USING (object_uuid, version, copy_name)"
+        " LEFT JOIN ("
+        "  SELECT oid, object_uuid, version FROM object"
+        "  UNION SELECT oid, object_uuid, version FROM deprecated_object"
+        " ) AS o USING (object_uuid, version);",
+        clause->str);
+
+    rc = dss_execute_generic_get(handle, DSS_FULL_LAYOUT, request,
+                                 (void **) layouts, layout_count);
+
+out:
+    g_string_free(request, true);
+    g_string_free(clause, true);
+
+    return rc;
+}
