@@ -1444,9 +1444,8 @@ struct lrs_dev *dev_picker(GPtrArray *devices,
         struct lrs_dev *prev = selected;
 
         MUTEX_LOCK(&itr->ld_mutex);
-        if (dev_has_ongoing_io(itr) || itr->ld_needs_sync ||
-            itr->ld_sub_request || itr->ld_ongoing_scheduled) {
-            pho_debug("Skipping busy device '%s'", itr->ld_dev_path);
+        if (!dev_is_sched_ready(itr)) {
+            pho_debug("Skipping not ready device '%s'", itr->ld_dev_path);
             goto unlock_continue;
         }
 
@@ -1458,19 +1457,6 @@ struct lrs_dev *dev_picker(GPtrArray *devices,
                           itr->ld_dev_path);
                 goto unlock_continue;
             }
-        }
-
-        if (dev_is_failed(itr)) {
-            pho_debug("Skipping device '%s' with status %s", itr->ld_dev_path,
-                      op_status2str(itr->ld_op_status));
-            goto unlock_continue;
-        }
-
-        if (!thread_is_running(&itr->ld_device_thread)) {
-            pho_debug("Skipping device '%s' with thread '%s'",
-                      itr->ld_dev_path,
-                      thread_state2str(&itr->ld_device_thread));
-            goto unlock_continue;
         }
 
         if (one_drive_available)
