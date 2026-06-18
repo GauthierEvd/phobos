@@ -472,6 +472,7 @@ void layout_info_free_extents(struct layout_info *layout)
     for (i = 0; i < layout->ext_count; i++) {
         free(layout->extents[i].address.buff);
         free(layout->extents[i].uuid);
+        pho_attrs_free(&layout->extents[i].info);
     }
     layout->ext_count = 0;
     free(layout->extents);

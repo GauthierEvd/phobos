@@ -138,3 +138,105 @@ int collect_rebuild_extents_and_frequency(struct pho_id *med,
 
     return 0;
 }
+
+static struct extent *choose_media_with_max_frequency(
+                                          GHashTable *frequency,
+                                          struct rebuild_extent *rebuild_extent)
+{
+    struct extent *best = NULL;
+    int max_freq = 0;
+
+    for (int i = 0; i < rebuild_extent->avail_extents->len; i++) {
+        struct extent *extent =
+            g_ptr_array_index(rebuild_extent->avail_extents, i);
+        struct pho_id *media = &extent->media;
+        int freq;
+
+        freq = GPOINTER_TO_INT(g_hash_table_lookup(frequency, media));
+        if (freq > max_freq) {
+            max_freq = freq;
+            best = extent;
+        }
+    }
+
+    return best;
+}
+
+/* The media are always from the same family and library */
+static int pho_id_name_cmp(const void *a, const void *b)
+{
+    const struct pho_id *id_a = a;
+    const struct pho_id *id_b = b;
+
+    return strcmp(id_a->name, id_b->name);
+}
+
+static struct group_key *new_group_key(struct extent **extents,
+                                       int n_extents)
+{
+    struct group_key *key;
+
+    key = xmalloc(sizeof(*key) + n_extents * sizeof(*key->media));
+    key->n_media = n_extents;
+
+    for (int i = 0; i < n_extents; i++)
+        pho_id_copy(&key->media[i], &extents[i]->media);
+
+    qsort(key->media, key->n_media, sizeof(*key->media), pho_id_name_cmp);
+
+    return key;
+}
+
+static void append_item_to_group(GHashTable *groups, struct group_key *key,
+                                 struct rebuild_extent *rebuild_extent)
+{
+    GPtrArray *group_rebuild_extent;
+
+    group_rebuild_extent = g_hash_table_lookup(groups, key);
+    if (group_rebuild_extent == NULL) {
+        group_rebuild_extent = g_ptr_array_new();
+        g_hash_table_insert(groups, key, group_rebuild_extent);
+    } else {
+        free(key);
+    }
+
+    g_ptr_array_add(group_rebuild_extent, rebuild_extent);
+}
+
+void group_extents(GHashTable *groups, GArray *extents_to_rebuild,
+                   GHashTable *frequency)
+{
+    for (int i = 0; i < extents_to_rebuild->len; i++) {
+        struct rebuild_extent *rebuild_extent =
+            &g_array_index(extents_to_rebuild, struct rebuild_extent, i);
+        struct extent **extents = NULL;
+        struct group_key *key;
+        int n_extents;
+
+        /* If the number of extents required for the rebuild is equal to the
+         * number of available extents, then we take them all. This is always
+         * the case for RAID4, and sometimes for RAID1 when only one replica is
+         * available. Otherwise, in the other RAID1 cases, we choose the extent
+         * that is present on the most frequently used medium among all of them.
+         *
+         * XXX: This will need to be modified if new layouts are added in the
+         *      future.
+         */
+        if (rebuild_extent->n_data_extents ==
+            rebuild_extent->avail_extents->len) {
+            extents = (struct extent **) rebuild_extent->avail_extents->pdata;
+            n_extents = rebuild_extent->avail_extents->len;
+        } else {
+            struct extent *extent;
+
+            extent = choose_media_with_max_frequency(frequency,
+                                                     rebuild_extent);
+            n_extents = 1;
+            extents = &extent;
+        }
+
+        key = new_group_key(extents, n_extents);
+
+        append_item_to_group(groups, key, rebuild_extent);
+    }
+}

@@ -37,6 +37,37 @@ struct rebuild_extent {
                                         */
 };
 
+struct group_key {
+    int n_media;
+    struct pho_id media[];
+};
+
+static inline guint group_key_hash(gconstpointer data)
+{
+    const struct group_key *key = data;
+    guint hash = key->n_media;
+
+    for (guint i = 0; i < key->n_media; i++)
+        hash ^= g_pho_id_hash(&key->media[i]);
+
+    return hash;
+}
+
+static inline gboolean group_key_equal(gconstpointer a, gconstpointer b)
+{
+    const struct group_key *ka = a;
+    const struct group_key *kb = b;
+
+    if (ka->n_media != kb->n_media)
+        return false;
+
+    for (guint i = 0; i < ka->n_media; i++)
+        if (!pho_id_equal(&ka->media[i], &kb->media[i]))
+            return false;
+
+    return true;
+}
+
 /**
  * Rebuild all the extents of a copy on \p med.
  *
@@ -50,11 +81,12 @@ int rebuild_copy(struct rebuild_extent *rebuild_extent);
  * Retrieve the extents to rebuild for each copy and computes the frequency
  * of occurrence of all the media we can use to rebuild that extent.
  *
- * @param[in]     med       The medium to rebuild
- * @param[in]     layouts   All the layouts on \p med
- * @param[in]     n_layout  The number of layouts
- * @param[in/out] frequency Hashtable with the frequency of each medium
- * @param[in/out] extents   The extents to rebuild
+ * @param[in]     med                  The medium to rebuild
+ * @param[in]     layouts              All the layouts on \p med
+ * @param[in]     n_layout             The number of layouts
+ * @param[in/out] frequency            Hashtable with the frequency of each
+ *                                     medium
+ * @param[in/out] extents_to_rebuild   The extents to rebuild
  *
  * @return 0 on success, negated errno on failure
  */
@@ -62,5 +94,24 @@ int collect_rebuild_extents_and_frequency(struct pho_id *med,
                                           struct layout_info *layouts,
                                           int n_layout,
                                           GHashTable *frequency,
-                                          GArray *extents);
+                                          GArray *extents_to_rebuild);
+
+/**
+ * Group rebuild extents by the media needed to rebuild them.
+ *
+ * If the number of available extents is equal the n_data_extents, all
+ * available media are used as the group key. Otherwise, we choose the more
+ * frequent media.
+ *
+ * Groups are appended to \p groups.
+ *
+ * @param[in/out] groups               All the different groups to rebuild
+ * @param[in]     extents_to_rebuild   All the extents to rebuild
+ * @param[in]     frequency            Frequency of occurrence of each media
+ *
+ * @return 0 on success, negated errno on failure
+ */
+void group_extents(GHashTable *groups, GArray *extents_to_rebuild,
+                   GHashTable *frequency);
+
 #endif
