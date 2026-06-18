@@ -398,10 +398,16 @@ static inline bool dev_has_ongoing_io(struct lrs_dev *dev)
            g_hash_table_size(dev->ld_ongoing_partial_io_waiting_sync);
 }
 
+static inline bool dev_is_full_ongoing_io(struct lrs_dev *dev)
+{
+    return (g_hash_table_size(dev->ld_ongoing_io) +
+            g_hash_table_size(dev->ld_ongoing_partial_io_waiting_sync)) > 0;
+}
+
 static inline bool dev_is_sched_ready(struct lrs_dev *dev)
 {
     return dev && thread_is_running(&dev->ld_device_thread) &&
-           !dev_has_ongoing_io(dev) && !dev->ld_needs_sync &&
+           !dev_is_full_ongoing_io(dev) && !dev->ld_needs_sync &&
            !dev->ld_sub_request && !dev->ld_ongoing_scheduled &&
            !dev_is_failed(dev) &&
            (dev->ld_dss_dev_info->rsc.adm_status == PHO_RSC_ADM_ST_UNLOCKED);
