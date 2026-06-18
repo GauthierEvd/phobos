@@ -240,3 +240,41 @@ void group_extents(GHashTable *groups, GArray *extents_to_rebuild,
         append_item_to_group(groups, key, rebuild_extent);
     }
 }
+
+static gint cmp_timeval(gconstpointer _a, gconstpointer _b)
+{
+    const struct rebuild_extent *a = *((struct rebuild_extent **) _a);
+    const struct rebuild_extent *b = *((struct rebuild_extent **) _b);
+
+    if (a->extent_to_rebuild->creation_time.tv_sec <
+        b->extent_to_rebuild->creation_time.tv_sec)
+        return -1;
+
+    if (a->extent_to_rebuild->creation_time.tv_sec >
+        b->extent_to_rebuild->creation_time.tv_sec)
+        return 1;
+
+    if (a->extent_to_rebuild->creation_time.tv_usec <
+        b->extent_to_rebuild->creation_time.tv_usec)
+        return -1;
+
+    if (a->extent_to_rebuild->creation_time.tv_usec >
+        b->extent_to_rebuild->creation_time.tv_usec)
+        return 1;
+
+    return 0;
+}
+
+void sort_extents_by_creation_time(GHashTable *groups)
+{
+    GHashTableIter iter;
+    gpointer key;
+    gpointer value;
+
+    g_hash_table_iter_init(&iter, groups);
+    while (g_hash_table_iter_next(&iter, &key, &value)) {
+        GPtrArray *array = value;
+
+        g_ptr_array_sort(array, cmp_timeval);
+    }
+}

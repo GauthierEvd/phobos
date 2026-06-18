@@ -114,4 +114,14 @@ int collect_rebuild_extents_and_frequency(struct pho_id *med,
 void group_extents(GHashTable *groups, GArray *extents_to_rebuild,
                    GHashTable *frequency);
 
+/**
+ * Sort each pending rebuild group by extent creation time.
+ *
+ * The sort is done inside every pending group so older extents
+ * are rebuilt before newer extents within that group.
+ *
+ * @param[in] groups  pending groups
+ */
+void sort_extents_by_creation_time(GHashTable *groups);
+
 #endif

@@ -3026,6 +3026,8 @@ int phobos_admin_media_rebuild(struct admin_handle *adm, struct media_info *med,
 
         group_extents(groups, extents_to_rebuild, frequency);
 
+        sort_extents_by_creation_time(groups);
+
         g_hash_table_iter_init(&iter, groups);
         while (g_hash_table_iter_next(&iter, &key, &value)) {
             GPtrArray *array = value;
