@@ -2,6 +2,9 @@
 
 ## Next
  * WARNING: the stat dev.umount_error is changed to dev.umount_errors .
+ * Parallel IO per device are now enabled. The maximum number of parallel IO per
+   device and for each family can now be configured to more than 1. 0 means
+   unlimited.
  * add the "phobos copy delete_incomplete" command to delete incomplete copies
    and the related objects
  * WARNING: When calling the pho_xfer_desc_clean function  after a `phobos_get`

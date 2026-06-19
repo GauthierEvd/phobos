@@ -239,3 +239,22 @@ Example:
 
     [lrs]
     locate_lock_expirancy = 300000
+
+*nb_max_parallel_io*
+--------------------
+
+The **nb_max_parallel_io** parameter defines the maximum number of parallel IO
+per device per family. Its value must be a comma-separated list of "key=value"
+pairs for each family. The specified value must be between **0** and
+**2^32**. **0** means unlimited. The default value is **1** for each family.
+You are strongly advised to let the default value 1 for the tape family.
+
+If this parameter is not specified, Phobos defaults to the following:
+**nb_max_parallel_io = tape=1,dir=1,rados_pool=1**.
+
+Example:
+
+.. code:: ini
+
+    [lrs]
+    nb_max_parallel_io = tape=1,dir=100,rados=10

@@ -30,6 +30,7 @@
 #include <stdbool.h>
 #include <stdatomic.h>
 
+#include "lrs_cfg.h"
 #include "lrs_thread.h"
 
 #include "pho_dss.h"
@@ -398,19 +399,55 @@ static inline bool dev_has_ongoing_io(struct lrs_dev *dev)
            g_hash_table_size(dev->ld_ongoing_partial_io_waiting_sync);
 }
 
+static __thread bool nb_max_parallel_io_set[] = {
+    [PHO_RSC_TAPE] = false,
+    [PHO_RSC_DIR]  = false,
+    [PHO_RSC_RADOS_POOL] = false,
+};
+
+#define DEFAULT_NB_MAX_PARALLEL_IO 1
+
+static __thread unsigned int nb_max_parallel_io[] = {
+    [PHO_RSC_TAPE] = DEFAULT_NB_MAX_PARALLEL_IO,
+    [PHO_RSC_DIR]  = DEFAULT_NB_MAX_PARALLEL_IO,
+    [PHO_RSC_RADOS_POOL] = DEFAULT_NB_MAX_PARALLEL_IO,
+};
+
 static inline bool dev_is_full_ongoing_io(struct lrs_dev *dev)
 {
+    enum rsc_family family = dev->ld_dss_dev_info->rsc.id.family;
+
+    if (!nb_max_parallel_io_set[family]) {
+        int rc;
+
+        rc = get_cfg_nb_max_parallel_io_value(family,
+                                              &nb_max_parallel_io[family]);
+        if (rc) {
+            pho_error(rc,
+                      "We can not get the nb_max_parallel_io config value for "
+                      "the family '%s', we use the default %u value",
+                      rsc_family2str(family), DEFAULT_NB_MAX_PARALLEL_IO);
+        }
+
+        nb_max_parallel_io_set[family] = true;
+    }
+
+    /* unlimited case */
+    if (nb_max_parallel_io[family] == 0)
+        return false;
+
     return (g_hash_table_size(dev->ld_ongoing_io) +
-            g_hash_table_size(dev->ld_ongoing_partial_io_waiting_sync)) > 0;
+            g_hash_table_size(dev->ld_ongoing_partial_io_waiting_sync)) >=
+           nb_max_parallel_io[family];
 }
 
 static inline bool dev_is_sched_ready(struct lrs_dev *dev)
 {
     return dev && thread_is_running(&dev->ld_device_thread) &&
-           !dev_is_full_ongoing_io(dev) && !dev->ld_needs_sync &&
-           !dev->ld_sub_request && !dev->ld_ongoing_scheduled &&
-           !dev_is_failed(dev) &&
-           (dev->ld_dss_dev_info->rsc.adm_status == PHO_RSC_ADM_ST_UNLOCKED);
+           !dev->ld_needs_sync && !dev->ld_sub_request &&
+           !dev->ld_ongoing_scheduled && !dev_is_failed(dev) &&
+           (dev->ld_dss_dev_info->rsc.adm_status == PHO_RSC_ADM_ST_UNLOCKED) &&
+           !dev_is_full_ongoing_io(dev);
 }
 
 static inline bool dev_is_online(struct lrs_dev *dev)

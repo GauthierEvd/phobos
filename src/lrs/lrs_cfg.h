@@ -45,8 +45,9 @@ enum pho_cfg_params_lrs {
     PHO_CFG_LRS_fifo_max_write_per_grouping,
     PHO_CFG_LRS_grouping_on_dir,
     PHO_CFG_LRS_locate_lock_expirancy,
+    PHO_CFG_LRS_nb_max_parallel_io,
 
-    PHO_CFG_LRS_LAST = PHO_CFG_LRS_locate_lock_expirancy,
+    PHO_CFG_LRS_LAST = PHO_CFG_LRS_nb_max_parallel_io,
 };
 
 extern const struct pho_config_item cfg_lrs[];
@@ -82,4 +83,14 @@ int get_cfg_sync_nb_req_value(enum rsc_family family, unsigned int *threshold);
  */
 int get_cfg_sync_wsize_value(enum rsc_family family, unsigned long *threshold);
 
+/**
+ * Getter of nb_max_parallel_io value for a given family.
+ *
+ * @param[in]   family              Targeted family.
+ * @param[out]  nb_max_parallel_io  Returned threshold value.
+ * @return                          0 on success,
+ *                                  -errno on failure.
+ */
+int get_cfg_nb_max_parallel_io_value(enum rsc_family family,
+                                     unsigned int *nb_max_parallel_io);
 #endif

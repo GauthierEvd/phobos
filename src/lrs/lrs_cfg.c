@@ -94,6 +94,11 @@ const struct pho_config_item cfg_lrs[] = {
         .name    = "locate_lock_expirancy",
         .value   = "0",
     },
+    [PHO_CFG_LRS_nb_max_parallel_io] = {
+        .section = "lrs",
+        .name    = "nb_max_parallel_io",
+        .value   = "tape=1,dir=1,rados_pool=1"
+    },
 };
 
 static int _get_unsigned_long_from_string(const char *value,
@@ -182,5 +187,26 @@ int get_cfg_sync_wsize_value(enum rsc_family family, unsigned long *threshold)
 
     *threshold *= 1024; // converting from KiB to bytes
 
+    return 0;
+}
+
+int get_cfg_nb_max_parallel_io_value(enum rsc_family family,
+                                     unsigned int *max_parallel_io)
+{
+    unsigned long ul_value;
+    char *value;
+    int rc;
+
+    rc = PHO_CFG_GET_SUBSTRING_VALUE(cfg_lrs, PHO_CFG_LRS, nb_max_parallel_io,
+                                     family, &value);
+    if (rc)
+        return rc;
+
+    rc = _get_unsigned_long_from_string(value, 0, UINT_MAX, &ul_value);
+    free(value);
+    if (rc)
+        return rc;
+
+    *max_parallel_io = ul_value;
     return 0;
 }
