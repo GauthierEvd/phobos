@@ -3033,7 +3033,8 @@ static void sched_fetch_device_status(struct lrs_dev *device,
         json_decref(integer);
     }
 
-    ongoing_io = json_boolean(dev_has_ongoing_io(device));
+    ongoing_io = json_integer(g_hash_table_size(device->ld_ongoing_io) +
+        g_hash_table_size(device->ld_ongoing_partial_io_waiting_sync));
     if (ongoing_io) {
         json_object_set(device_status, "ongoing_io", ongoing_io);
         json_decref(ongoing_io);
