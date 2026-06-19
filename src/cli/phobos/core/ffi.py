@@ -1129,7 +1129,7 @@ class LibDrvInfo(Structure): # pylint: disable=too-few-public-methods
         ('ldi_medium_id', Id)
     ]
 
-class DriveStatus(CLIManagedResourceMixin): #pylint: disable=too-many-instance-attributes
+class DeviceStatus(CLIManagedResourceMixin): #pylint: disable=too-many-instance-attributes
     """Wrapper class to use dump_object_list"""
 
     def __init__(self, values=None):

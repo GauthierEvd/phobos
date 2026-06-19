@@ -22,18 +22,18 @@ Status action for Phobos CLI
 """
 
 from phobos.cli.action import ActionOptHandler
-from phobos.core.ffi import DriveStatus
+from phobos.core.ffi import DeviceStatus
 
 class StatusOptHandler(ActionOptHandler):
     """Display I/O and drive status"""
     label = 'status'
-    descr = 'display I/O and drive status'
+    descr = 'display I/O and device status'
 
     @classmethod
     def add_options(cls, parser):
         """Add resource-specific options."""
         super(StatusOptHandler, cls).add_options(parser)
-        attr = list(DriveStatus().get_display_fields().keys())
+        attr = list(DeviceStatus().get_display_fields().keys())
         attr.sort()
         parser.add_argument('-o', '--output', type=lambda t: t.split(','),
                             default='all',

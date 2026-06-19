@@ -21,10 +21,14 @@
 Dir target for Phobos CLI
 """
 
+import json
+import sys
+
 # pylint: disable=duplicate-code
 from phobos.cli.action.format import FormatOptHandler
 from phobos.cli.action.lock import LockOptHandler
 from phobos.cli.action.resource_delete import ResourceDeleteOptHandler
+from phobos.cli.action.status import StatusOptHandler
 from phobos.cli.action.unlock import UnlockOptHandler
 from phobos.cli.common.exec import (exec_add_dir_rados, exec_delete_dir_rados,
                                     exec_lock_dir_rados, exec_unlock_dir_rados)
@@ -36,8 +40,10 @@ from phobos.cli.target.media import (MediaAddOptHandler, MediaListOptHandler,
                                      MediaImportOptHandler,
                                      MediaSetAccessOptHandler,
                                      MediaUpdateOptHandler)
+from phobos.core.admin import Client as AdminClient
 from phobos.core.const import fs_type2str, PHO_RSC_DIR # pylint: disable=no-name-in-module
-from phobos.core.ffi import (FSType, ResourceFamily)
+from phobos.core.ffi import (DeviceStatus, FSType, ResourceFamily)
+from phobos.output import dump_object_list
 
 class DirFormatOptHandler(FormatOptHandler):
     """Format a directory."""
@@ -98,6 +104,7 @@ class DirOptHandler(MediaOptHandler):
         MediaRenameOptHandler,
         MediaUpdateOptHandler, # pylint: enable=duplicate-code
         DirResourceDeleteOptHandler,
+        StatusOptHandler,
         UnlockOptHandler,
     ]
 
@@ -115,6 +122,23 @@ class DirOptHandler(MediaOptHandler):
     def del_medium(self, adm, family, resources, library, lost, force):
         #pylint: disable=too-many-arguments
         adm.medium_delete(family, resources, library, lost, force)
+
+    def exec_status(self):
+        """Display I/O and dir status"""
+        try:
+            with AdminClient(lrs_required=True) as adm:
+                status = json.loads(adm.device_status(PHO_RSC_DIR))
+                # disable pylint's warning as it's suggestion does not work
+                for i in range(len(status)): #pylint: disable=consider-using-enumerate
+                    status[i] = DeviceStatus(status[i])
+
+                dump_object_list(sorted(status, key=lambda x: x.address),
+                                 self.params.get('output'))
+
+        except EnvironmentError as err:
+            self.logger.error("Cannot read status of dir: %s",
+                              env_error_format(err))
+            sys.exit(abs(err.errno))
 
     def exec_delete(self):
         """

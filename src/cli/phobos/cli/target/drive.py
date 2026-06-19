@@ -38,7 +38,7 @@ from phobos.cli.common.utils import (check_output_attributes,
 from phobos.cli.target.device import DeviceLockOptHandler, DeviceOptHandler
 from phobos.core.admin import Client as AdminClient
 from phobos.core.const import PHO_RSC_TAPE, DSS_DEVICE # pylint: disable=no-name-in-module
-from phobos.core.ffi import (DevInfo, DriveStatus, ResourceFamily)
+from phobos.core.ffi import (DevInfo, DeviceStatus, ResourceFamily)
 from phobos.output import dump_object_list
 
 
@@ -255,7 +255,7 @@ class DriveOptHandler(DeviceOptHandler):
                 status = json.loads(adm.device_status(PHO_RSC_TAPE))
                 # disable pylint's warning as it's suggestion does not work
                 for i in range(len(status)): #pylint: disable=consider-using-enumerate
-                    status[i] = DriveStatus(status[i])
+                    status[i] = DeviceStatus(status[i])
 
                 dump_object_list(sorted(status, key=lambda x: x.address),
                                  self.params.get('output'))
