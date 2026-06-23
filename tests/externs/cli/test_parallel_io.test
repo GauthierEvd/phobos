@@ -1,0 +1,121 @@
+#!/usr/bin/env bash
+
+#
+#  All rights reserved (c) 2014-2026 CEA/DAM.
+#
+#  This file is part of Phobos.
+#
+#  Phobos is free software: you can redistribute it and/or modify it under
+#  the terms of the GNU Lesser General Public License as published by
+#  the Free Software Foundation, either version 2.1 of the License, or
+#  (at your option) any later version.
+#
+#  Phobos is distributed in the hope that it will be useful,
+#  but WITHOUT ANY WARRANTY; without even the implied warranty of
+#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#  GNU Lesser General Public License for more details.
+#
+#  You should have received a copy of the GNU Lesser General Public License
+#  along with Phobos. If not, see <http://www.gnu.org/licenses/>.
+#
+
+test_dir=$(dirname $(readlink -e $0))
+. $test_dir/test_env.sh
+. $test_dir/setup_db.sh
+. $test_dir/test_launch_daemon.sh
+. $test_dir/tape_drive.sh
+. $test_dir/utils_generation.sh
+
+################################################################################
+#                                    SETUP                                     #
+################################################################################
+
+function setup()
+{
+    setup_tables
+    invoke_lrs
+    setup_test_dirs
+    dir="$(mktemp -d "$DIR_TEST_IN/test.pho.XXXX")"
+    $phobos dir add ${dir}
+    $phobos dir format --fs posix --unlock ${dir}
+    setup_dummy_files 1 1k 1
+}
+
+function cleanup()
+{
+    waive_lrs
+    drop_tables
+    cleanup_dummy_files
+    cleanup_test_dirs
+}
+
+# Execute a put command but sleep after having get the booking
+function writer_sleep_after_recv_alloc
+{
+    (
+        tmp_gdb_script=$(mktemp)
+        trap "rm $tmp_gdb_script" EXIT
+        cat <<EOF > "$tmp_gdb_script"
+set breakpoint pending on
+break raid_writer_split_setup
+commands
+shell touch ${DIR_TEST_IN}/${!#}
+shell sleep 6
+continue
+end
+run $phobos $*
+EOF
+
+        DEBUGINFOD_URLS="" gdb -batch -x "$tmp_gdb_script" -q python3
+    )
+}
+
+function test_dir_parallel_io()
+{
+    local pids=()
+
+    for nb_parallel in `seq 1 3`; do
+        for highest_io in `seq 0 ${nb_parallel}`; do
+            # nb_parallel_runing_io
+            if (( highest_io < nb_parallel )); then
+                ((nb_parallel_running_io=highest_io+1))
+            else
+                nb_parallel_running_io="${nb_parallel}"
+            fi
+
+            ((last_parallel_io=nb_parallel_running_io-1)) || true
+
+            export PHOBOS_LRS_nb_max_parallel_io="dir=${nb_parallel}"
+            waive_lrs
+            invoke_lrs
+
+            # starting IOs
+            for io in `seq 0 ${highest_io}`; do
+                writer_sleep_after_recv_alloc put -f dir ${FILES[0]} \
+                    obj_${nb_parallel}_${highest_io}_${io} &
+                pids+=("$!")
+                sleep 1
+            done
+
+            # checking IOs are started
+            for io in `seq 0 ${last_parallel_io}`; do
+                while [ ! -f ${DIR_TEST_IN}/obj_${nb_parallel}_${highest_io}_${io} \
+                          ]; do
+                    sleep 1
+                done
+            done
+
+            # checking nb parallel running IOs
+            $valg_phobos dir status -o device,ongoing_io |
+                grep ${nb_parallel_running_io} |
+                grep ${dir}
+
+            # waiting the end of IOs
+            for io in `seq 0 ${highest_io}`; do
+                wait ${pids[${io}]}
+            done
+        done
+    done
+}
+
+TESTS=("setup; test_dir_parallel_io; cleanup")
