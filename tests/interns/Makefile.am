@@ -63,6 +63,7 @@ check_PROGRAMS=test_attrs \
                test_ltfs_logs \
                test_mapper \
                test_phobos_admin_medium_locate \
+               test_phobos_admin_rebuild_schedule \
                test_pho_cache \
                test_ping \
                test_scsi_logs \
@@ -187,6 +188,12 @@ test_phobos_admin_medium_locate_SOURCES=test_phobos_admin_medium_locate.c
 test_phobos_admin_medium_locate_LDADD=$(ADMIN_LIB) $(TESTS_LIB) \
                                       $(TESTS_LIB_DEPS)
 test_phobos_admin_medium_locate_CFLAGS=$(AM_CFLAGS) -I$(TO_SRC)/core/dss \
+                                       $(TESTS_LIB_INCLUDES)
+
+test_phobos_admin_rebuild_schedule_SOURCES=test_phobos_admin_rebuild_schedule.c
+test_phobos_admin_rebuild_schedule_LDADD=$(ADMIN_LIB) $(TESTS_LIB) \
+                                      $(TESTS_LIB_DEPS)
+test_phobos_admin_rebuild_schedule_CFLAGS=$(AM_CFLAGS) -I$(TO_SRC)/admin \
                                        $(TESTS_LIB_INCLUDES)
 
 test_pho_cache_SOURCES=test_pho_cache.c
