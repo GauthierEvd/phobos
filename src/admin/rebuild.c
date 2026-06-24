@@ -278,6 +278,137 @@ void sort_extents_by_creation_time(struct rebuild_scheduler *sched)
     }
 }
 
+static bool key_has_media(struct group_key *key, struct pho_id *medium)
+{
+    for (int i = 0; i < key->n_media; i++) {
+        if (pho_id_equal(&key->media[i], medium))
+            return true;
+    }
+
+    return false;
+}
+
+static int count_required_already_mounted(struct rebuild_scheduler *sched,
+                                          struct group_key *candidate)
+{
+    int count = 0;
+
+    if (sched->curr_media == NULL)
+        return count;
+
+    for (int i = 0; i < candidate->n_media; i++) {
+        if (key_has_media(sched->curr_media, &candidate->media[i]))
+            count++;
+    }
+
+    return count;
+}
+
+static int candidate_cost(struct rebuild_scheduler *sched,
+                          struct group_key *candidate)
+{
+    int already_mounted = count_required_already_mounted(sched, candidate);
+
+    if (sched->curr_media == NULL)
+        return candidate->n_media;
+
+    /* The transition cost counts both unmounts and mounts. A reused medium
+     * appears once in the current group and once in the candidate group, so
+     * remove both operations from the cost.
+     */
+    return sched->curr_media->n_media + candidate->n_media -
+           2 * already_mounted;
+}
+
+/* Number of pending groups that still need this tape. */
+static int future_score_candidate(struct rebuild_scheduler *sched,
+                                  struct group_key *candidate)
+{
+    GHashTableIter iter;
+    gpointer value_ptr;
+    gpointer key_ptr;
+    int score = 0;
+
+    g_hash_table_iter_init(&iter, sched->pending_groups);
+
+    while (g_hash_table_iter_next(&iter, &key_ptr, &value_ptr)) {
+        struct group_key *key = key_ptr;
+
+        /* Skip the potential candidate */
+        if (key == candidate)
+            continue;
+
+        for (int i = 0; i < candidate->n_media; i++) {
+            if (key_has_media(key, &candidate->media[i]))
+                score++;
+        }
+    }
+
+    return score;
+}
+
+static int candidate_weight(GPtrArray *items)
+{
+    return items->len;
+}
+
+static GHashTable *build_media_usage(GHashTable *pending)
+{
+    GHashTable *usage = g_hash_table_new(g_pho_id_hash, g_pho_id_equal);
+    GHashTableIter iter;
+    gpointer value_ptr;
+    gpointer key_ptr;
+
+    g_hash_table_iter_init(&iter, pending);
+
+    while (g_hash_table_iter_next(&iter, &key_ptr, &value_ptr)) {
+        struct group_key *key = key_ptr;
+
+        for (int i = 0; i < key->n_media; i++) {
+            int old = GPOINTER_TO_INT(g_hash_table_lookup(usage,
+                                                          &key->media[i]));
+            g_hash_table_replace(usage, &key->media[i],
+                                 GINT_TO_POINTER(old + 1));
+        }
+    }
+
+    return usage;
+}
+
+/**
+ * Connectivity score of a group among pending groups.
+ *
+ * Groups with a low overlap_degree are usually located at the edge of a
+ * connected component. Groups with a high overlap_degree are usually more
+ * central.
+ *
+ * We use this value when starting a new component: starting from an edge
+ * avoids starting in the middle of a chain and then having to come back later.
+ */
+static int group_overlap_degree(GHashTable *usage, struct group_key *key)
+{
+    int degree = 0;
+
+    for (int i = 0; i < key->n_media; i++) {
+        int count = GPOINTER_TO_INT(g_hash_table_lookup(usage, &key->media[i]));
+
+        if (count > 0)
+            /* Remove the media from key */
+            degree += count - 1;
+    }
+
+    return degree;
+}
+
+struct group_candidate {
+    struct group_key *key;
+    GPtrArray *items;
+    int cost;
+    int future_score;
+    int degree;
+    int weight;
+};
+
 static void free_current_group(struct rebuild_scheduler *sched)
 {
     free(sched->curr_media);
@@ -300,22 +431,152 @@ static void select_group(struct rebuild_scheduler *sched,
     *out = extents_to_rebuild;
 }
 
-bool rebuild_scheduler_next(struct rebuild_scheduler *sched, GPtrArray **out)
+static bool has_non_isolated_group(struct rebuild_scheduler *sched,
+                                   GHashTable *usage)
 {
     GHashTableIter iter;
     gpointer value_ptr;
     gpointer key_ptr;
 
+    /* Check if there is atleast one group linked with the others */
+    g_hash_table_iter_init(&iter, sched->pending_groups);
+
+    while (g_hash_table_iter_next(&iter, &key_ptr, &value_ptr)) {
+        struct group_key *key = key_ptr;
+
+        if (group_overlap_degree(usage, key) > 0)
+            return true;
+    }
+
+    return false;
+}
+
+static void init_candidate(struct rebuild_scheduler *sched, GHashTable *usage,
+                           struct group_candidate *candidate,
+                           struct group_key *key, GPtrArray *items)
+{
+    candidate->key = key;
+    candidate->items = items;
+    candidate->cost = candidate_cost(sched, key);
+    candidate->future_score = future_score_candidate(sched, key);
+    candidate->degree = group_overlap_degree(usage, key);
+    candidate->weight = candidate_weight(items);
+}
+
+static bool better_start_group(const struct group_candidate *candidate,
+                               const struct group_candidate *best)
+{
+    /* A candidate is better when:
+     * - no group has been selected yet
+     * - it has a lower degree, meaning fewer pending neighbours and therefore
+     *   a better edge from which to start a connected component
+     * - it has the same degree but contains more rebuild items, so equal
+     *   scheduling choices process the largest group first.
+     */
+    return best->key == NULL ||
+           candidate->degree < best->degree ||
+           (candidate->degree == best->degree &&
+            candidate->weight > best->weight);
+}
+
+static bool better_next_group(const struct group_candidate *candidate,
+                              const struct group_candidate *best)
+{
+    /* A candidate is better when:
+     * - no group has been selected yet;
+     * - it has a lower immediate transition cost
+     * - it has the same cost but its media appear in more pending groups
+     * - it has the same cost and future score but a lower degree, meaning it is
+     *   closer to an edge
+     * - all scheduling metrics are tied but it contains more rebuild items.
+     */
+    return best->key == NULL ||
+           candidate->cost < best->cost ||
+           (candidate->cost == best->cost &&
+            candidate->future_score > best->future_score) ||
+           (candidate->cost == best->cost &&
+            candidate->future_score == best->future_score &&
+            candidate->degree < best->degree) ||
+           (candidate->cost == best->cost &&
+            candidate->future_score == best->future_score &&
+            candidate->degree == best->degree &&
+            candidate->weight > best->weight);
+}
+
+static struct group_candidate find_best_group(struct rebuild_scheduler *sched,
+                                              bool start_group)
+{
+    struct group_candidate best = {0};
+    bool has_non_isolated;
+    GHashTableIter iter;
+    gpointer value_ptr;
+    GHashTable *usage;
+    gpointer key_ptr;
+
+    usage = build_media_usage(sched->pending_groups);
+    has_non_isolated = start_group && has_non_isolated_group(sched, usage);
+
+    g_hash_table_iter_init(&iter, sched->pending_groups);
+
+    while (g_hash_table_iter_next(&iter, &key_ptr, &value_ptr)) {
+        struct group_candidate candidate;
+        struct group_key *key = key_ptr;
+        GPtrArray *items = value_ptr;
+
+        init_candidate(sched, usage, &candidate, key, items);
+
+        /* If a linked group exist, don't start by an isolated group */
+        if (has_non_isolated && candidate.degree == 0)
+            continue;
+
+        if ((start_group && better_start_group(&candidate, &best)) ||
+            (!start_group && better_next_group(&candidate, &best)))
+            best = candidate;
+    }
+
+    g_hash_table_destroy(usage);
+
+    return best;
+}
+
+static bool choose_start_group(struct rebuild_scheduler *sched, GPtrArray **out)
+{
+    struct group_candidate best = find_best_group(sched, true);
+
+    if (best.key == NULL)
+        return false;
+
+    select_group(sched, best.key, best.items, out);
+
+    return true;
+}
+
+static bool choose_next_group(struct rebuild_scheduler *sched,
+                              GPtrArray **out)
+{
+    struct group_candidate best = find_best_group(sched, false);
+
+    if (best.key == NULL)
+        return false;
+
+    if (sched->curr_media &&
+        count_required_already_mounted(sched, best.key) == 0)
+        return choose_start_group(sched, out);
+
+    select_group(sched, best.key, best.items, out);
+
+    return true;
+}
+
+bool rebuild_scheduler_next(struct rebuild_scheduler *sched, GPtrArray **out)
+{
     if (g_hash_table_size(sched->pending_groups) == 0)
         return false;
 
-    g_hash_table_iter_init(&iter, sched->pending_groups);
-    if (!g_hash_table_iter_next(&iter, &key_ptr, &value_ptr))
-        return false;
-
-    select_group(sched, key_ptr, value_ptr, out);
-
-    return true;
+    if (!sched->curr_media)
+        return choose_start_group(sched, out);
+    else
+        return choose_next_group(sched, out);
 }
 
 static void rebuild_extent_clear(void *data)

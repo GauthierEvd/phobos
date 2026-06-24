@@ -142,8 +142,10 @@ void rebuild_scheduler_free(struct rebuild_scheduler *sched);
 /**
  * Select the next group of rebuild items to process.
  *
- * The returned array remains owned by \p sched and is valid until the next call
- * to rebuild_scheduler_next() or rebuild_scheduler_free().
+ * The scheduler tries to minimize media changes, keep useful media mounted for
+ * future groups, and restart from a component edge when no current media can be
+ * reused. The returned array remains owned by \p sched and is valid until the
+ * next call to rebuild_scheduler_next() or rebuild_scheduler_free().
  *
  * @param[in/out] sched  rebuild scheduler
  * @param[out]    out    selected group items when true is returned
