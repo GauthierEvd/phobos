@@ -29,17 +29,18 @@ test_dir=$(dirname $(readlink -e $0))
 
 function setup
 {
+    local n_dirs=${1:-3}
+
     setup_tables
     setup_test_dirs
 
     INPUT_FILE="$DIR_TEST_IN/file"
     dd if=/dev/urandom of="$INPUT_FILE" bs=1K count=16
 
-    DIRS=(
-          $(mktemp -d "$DIR_TEST_IN/test_pho.XXXX")
-          $(mktemp -d "$DIR_TEST_IN/test_pho.XXXX")
-          $(mktemp -d "$DIR_TEST_IN/test_pho.XXXX")
-         )
+    DIRS=()
+    for _ in $(seq 1 $n_dirs); do
+        DIRS+=("$(mktemp -d "$DIR_TEST_IN/test_pho.XXXX")")
+    done
 
     invoke_lrs
 
@@ -82,7 +83,7 @@ function check_number_extent
     fi
 }
 
-function test_media_rebuild
+function test_media_rebuild_raid1
 {
     $phobos dir lock ${DIRS[2]}
     $phobos put -f dir -l raid1 --lyt-params=repl_count=2 $INPUT_FILE oid
@@ -110,4 +111,206 @@ function test_media_rebuild
     fi
 }
 
-TESTS=("setup; test_media_rebuild; cleanup")
+function update_creation_time
+{
+    local oid=$1
+    local dir=$2
+    local time=$3
+
+    local ext_uuid=$(get_extent_info $oid $dir ext_uuid)
+    ext_uuid=$(printf '%s' "$ext_uuid" | tr -d "[]'")
+
+    $PSQL -c "UPDATE extent SET creation_time = '$time' WHERE extent_uuid ='$ext_uuid'"
+}
+
+function get_timestamp
+{
+    local oid=$1
+    local dir=$2
+
+    local ts=$(get_extent_info $oid $dir creation_time)
+    ts=$(printf '%s' "$ts" | tr -d "[]'")
+
+    date -d "$ts" '+%s%N'
+}
+
+function test_media_rebuild_order_creation_time
+{
+    $phobos dir lock ${DIRS[2]}
+    $phobos put -f dir -l raid1 --lyt-params=repl_count=2 $INPUT_FILE oid1
+    $phobos put -f dir -l raid1 --lyt-params=repl_count=2 $INPUT_FILE oid2
+    $phobos put -f dir -l raid1 --lyt-params=repl_count=2 $INPUT_FILE oid3
+    $phobos dir unlock ${DIRS[2]}
+
+    local now=$(date +%s)
+
+    local ts=$(date -d "@$((now + 3))" '+%Y-%m-%d %H:%M:%S')
+    update_creation_time oid1 ${DIRS[0]} "$ts"
+
+    ts=$(date -d "@$((now + 1))" '+%Y-%m-%d %H:%M:%S')
+    update_creation_time oid2 ${DIRS[0]} "$ts"
+
+    ts=$(date -d "@$((now + 2))" '+%Y-%m-%d %H:%M:%S')
+    update_creation_time oid3 ${DIRS[0]} "$ts"
+
+    $valg_phobos dir rebuild ${DIRS[0]}
+
+    local oid1_ts=$(get_timestamp oid1 ${DIRS[2]})
+    local oid2_ts=$(get_timestamp oid2 ${DIRS[2]})
+    local oid3_ts=$(get_timestamp oid3 ${DIRS[2]})
+
+    if [[ $oid2_ts -gt $oid3_ts && $oid2_ts -gt $oid1_ts ]]; then
+        error "oid2 should be rebuilt first"
+    fi
+    if [[ $oid3_ts -lt $oid2_ts && $oid3_ts -gt $oid1_ts ]]; then
+        error "oid3 should be rebuilt second"
+    fi
+
+    if [[ $oid1_ts -lt $oid2_ts && $oid1_ts -lt $oid3_ts ]]; then
+        error "oid1 should be rebuilt last"
+    fi
+}
+
+function test_media_rebuild_empty_medium
+{
+    $phobos dir lock ${DIRS[2]}
+    $phobos put -f dir -l raid1 --lyt-params=repl_count=2 $INPUT_FILE oid
+    $phobos dir unlock ${DIRS[2]}
+
+    check_number_extent ${DIRS[0]} 1 ${DIRS[2]} 0
+
+    $valg_phobos dir rebuild ${DIRS[2]} ||
+        error "Rebuilding an empty medium should have succeeded"
+
+    check_number_extent ${DIRS[0]} 1 ${DIRS[2]} 0
+}
+
+function test_media_rebuild_no_writable_medium
+{
+    $phobos put -f dir -l raid1 --lyt-params=repl_count=2 $INPUT_FILE oid
+
+    $valg_phobos dir rebuild ${DIRS[0]} &&
+        error "Media rebuild should have failed without a writable medium"
+
+    check_number_extent ${DIRS[0]} 1 ${DIRS[1]} 1
+}
+
+function test_media_rebuild_raid4
+{
+    $phobos dir lock ${DIRS[3]}
+    $phobos put -f dir -l raid4 $INPUT_FILE oid
+    $phobos dir unlock ${DIRS[3]}
+
+    oid_before=$(get_extent_info oid ${DIRS[0]} ext_uuid)
+    oid_hash_before=$(get_extent_info oid ${DIRS[0]} xxh128)
+
+    check_number_extent ${DIRS[0]} 1 ${DIRS[3]} 0
+
+    $valg_phobos dir rebuild ${DIRS[0]}
+
+    check_number_extent ${DIRS[0]} 0 ${DIRS[3]} 1
+
+    oid_after=$(get_extent_info oid ${DIRS[3]} ext_uuid)
+    oid_hash_after=$(get_extent_info oid ${DIRS[3]} xxh128)
+
+    if [[ "$oid_before" == "$oid_after" ]]; then
+        error "oid extent should be rebuilt"
+    fi
+
+    if [[ "$oid_hash_after" != "$oid_hash_before" ]]; then
+        error "oid extent content should be the same"
+    fi
+}
+
+function test_media_rebuild_different_read_media
+{
+    # With these tags, we force the rebuild to always choose ${DIRS[4]}.
+    # Otherwise, many media can be choosed
+    $phobos dir update -T t1,t2,t3,t4 ${DIRS[0]}
+    $phobos dir update -T t1,t3 ${DIRS[1]}
+    $phobos dir update -T t2,t3,t4 ${DIRS[2]}
+    $phobos dir update -T t4 ${DIRS[3]}
+
+    # oid1 on DIRS[0] and DIRS[1]
+    $phobos dir lock ${DIRS[2]} ${DIRS[3]} ${DIRS[4]}
+    $phobos put -f dir -T t1 -l raid1 --lyt-params=repl_count=2 $INPUT_FILE oid1
+
+    # oid2 on DIRS[0] and DIRS[2]
+    $phobos dir lock ${DIRS[1]}
+    $phobos dir unlock ${DIRS[2]}
+    $phobos put -f dir -T t2 -l raid1 --lyt-params=repl_count=2 $INPUT_FILE oid2
+
+    # oid3 on DIRS[0], DIRS[1] and DIRS[2]
+    $phobos dir unlock ${DIRS[1]}
+    $phobos put -f dir -T t3 -l raid4  $INPUT_FILE oid3
+
+    # oid4 on DIRS[0], DIRS[2] and DIRS[3]
+    $phobos dir unlock ${DIRS[3]}
+    $phobos dir lock ${DIRS[1]}
+    $phobos put -f dir -T t4 -l raid4  $INPUT_FILE oid4
+
+    local oid1_hash_before=$(get_extent_info oid1 ${DIRS[0]} xxh128)
+    local oid2_hash_before=$(get_extent_info oid2 ${DIRS[0]} xxh128)
+    local oid3_hash_before=$(get_extent_info oid3 ${DIRS[0]} xxh128)
+    local oid4_hash_before=$(get_extent_info oid4 ${DIRS[0]} xxh128)
+
+    $phobos dir unlock ${DIRS[@]}
+    $phobos dir update -T t1,t2,t3,t4 ${DIRS[4]}
+    $phobos dir list -o all
+    check_number_extent ${DIRS[0]} 4 ${DIRS[4]} 0
+    $valg_phobos dir rebuild ${DIRS[0]}
+    check_number_extent ${DIRS[0]} 0 ${DIRS[4]} 4
+
+    local oid1_hash_after=$(get_extent_info oid1 ${DIRS[4]} xxh128)
+    local oid2_hash_after=$(get_extent_info oid2 ${DIRS[4]} xxh128)
+    local oid3_hash_after=$(get_extent_info oid3 ${DIRS[4]} xxh128)
+    local oid4_hash_after=$(get_extent_info oid4 ${DIRS[4]} xxh128)
+
+    if [[ "$oid1_hash_after" != "$oid1_hash_before" ||
+          "$oid2_hash_after" != "$oid2_hash_before" ||
+          "$oid3_hash_after" != "$oid3_hash_before" ||
+          "$oid4_hash_after" != "$oid4_hash_before" ]]; then
+        error "Rebuilt extents should keep the same xxh128"
+    fi
+}
+
+function test_media_rebuild_read_media_max_frequency
+{
+    # oid1 on DIRS[0], DIRS[1] and DIRS[2]
+    $phobos dir lock ${DIRS[3]} ${DIRS[4]}
+    $phobos put -f dir -l raid1 --lyt-params=repl_count=3 $INPUT_FILE oid1
+
+    # oid2 on DIRS[0], DIRS[1] and DIRS[3]
+    $phobos dir lock ${DIRS[2]} ${DIRS[4]}
+    $phobos dir unlock ${DIRS[3]}
+    $phobos put -f dir -l raid1 --lyt-params=repl_count=3 $INPUT_FILE oid2
+
+    oid1_hash_before=$(get_extent_info oid1 ${DIRS[0]} xxh128)
+    oid2_hash_before=$(get_extent_info oid2 ${DIRS[0]} xxh128)
+
+    check_number_extent ${DIRS[0]} 2 ${DIRS[4]} 0
+
+    # DIRS[1] is the most frequent readable medium. The less frequent
+    # alternatives are locked, so the rebuild succeeds only if DIRS[1] is used.
+    $phobos dir lock ${DIRS[2]} ${DIRS[3]}
+    $phobos dir unlock ${DIRS[4]}
+    $valg_phobos dir rebuild ${DIRS[0]}
+
+    check_number_extent ${DIRS[0]} 0 ${DIRS[4]} 2
+
+    oid1_hash_after=$(get_extent_info oid1 ${DIRS[4]} xxh128)
+    oid2_hash_after=$(get_extent_info oid2 ${DIRS[4]} xxh128)
+
+    if [[ "$oid1_hash_after" != "$oid1_hash_before" ||
+          "$oid2_hash_after" != "$oid2_hash_before" ]]; then
+        error "Rebuilt extents should keep the same xxh128"
+    fi
+}
+
+TESTS=("setup; test_media_rebuild_raid1; cleanup"
+       "setup; test_media_rebuild_empty_medium; cleanup"
+       "setup 2; test_media_rebuild_no_writable_medium; cleanup"
+       "setup 4; test_media_rebuild_raid4; cleanup"
+       "setup 5; test_media_rebuild_different_read_media; cleanup"
+       "setup 5; test_media_rebuild_read_media_max_frequency; cleanup"
+       "setup; test_media_rebuild_order_creation_time; cleanup")
