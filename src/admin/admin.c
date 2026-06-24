@@ -2950,20 +2950,6 @@ out_free:
     return rc;
 }
 
-static void rebuild_extent_clear(void *data)
-{
-    struct rebuild_extent *rebuild_extent = data;
-
-    g_ptr_array_free(rebuild_extent->avail_extents, true);
-}
-
-static void _g_ptr_array_free(void *data)
-{
-    GPtrArray *array = data;
-
-    g_ptr_array_free(array, true);
-}
-
 int phobos_admin_media_rebuild(struct admin_handle *adm, struct media_info *med,
                                int med_cnt)
 {
@@ -2974,12 +2960,8 @@ int phobos_admin_media_rebuild(struct admin_handle *adm, struct media_info *med,
     int i;
 
     for (i = 0; i < med_cnt; i++) {
-        GArray *extents_to_rebuild;
-        GHashTable *frequency;
-        GHashTableIter iter;
-        GHashTable *groups;
-        gpointer value;
-        gpointer key;
+        GPtrArray *extents_to_rebuild = NULL;
+        struct rebuild_scheduler *sched;
 
         if (med[i].rsc.id.family == PHO_RSC_DIR) {
             rc = _normalize_path(med[i].rsc.id.name);
@@ -3005,46 +2987,37 @@ int phobos_admin_media_rebuild(struct admin_handle *adm, struct media_info *med,
             return rc;
         }
 
-        frequency = g_hash_table_new_full(g_pho_id_hash, g_pho_id_equal,
-                                          free, NULL);
-        extents_to_rebuild = g_array_new(FALSE, FALSE,
-                                         sizeof(struct rebuild_extent));
-        g_array_set_clear_func(extents_to_rebuild, rebuild_extent_clear);
+        sched = rebuild_scheduler_new();
 
         rc = collect_rebuild_extents_and_frequency(&med[i].rsc.id, layouts,
-                                                   n_layout, frequency,
-                                                   extents_to_rebuild);
+                                                   n_layout, sched);
         if (rc) {
-            g_array_free(extents_to_rebuild, TRUE);
-            g_hash_table_destroy(frequency);
-            dss_res_free(layouts, n_layout);
+            pho_error(rc, "Failed to compute frequency of occurrence of each "
+                      "media");
+            rebuild_scheduler_free(sched);
             return rc;
         }
 
-        groups = g_hash_table_new_full(group_key_hash, group_key_equal,
-                                       free, _g_ptr_array_free);
+        group_extents(sched);
+        sort_extents_by_creation_time(sched);
 
-        group_extents(groups, extents_to_rebuild, frequency);
-
-        sort_extents_by_creation_time(groups);
-
-        g_hash_table_iter_init(&iter, groups);
-        while (g_hash_table_iter_next(&iter, &key, &value)) {
-            GPtrArray *array = value;
-
-            for (int j = 0; j < array->len; j++) {
+        while (rebuild_scheduler_next(sched, &extents_to_rebuild)) {
+            for (int j = 0; j < extents_to_rebuild->len; j++) {
                 struct rebuild_extent *rebuild_extent =
-                    (struct rebuild_extent *) g_ptr_array_index(array, j);
+                    (struct rebuild_extent *) g_ptr_array_index(
+                                                            extents_to_rebuild,
+                                                            j);
 
                 rc = rebuild_copy(rebuild_extent);
-                if (rc)
+                if (rc) {
+                    pho_error(rc, "Failed to rebuild an extents");
+                    rebuild_scheduler_free(sched);
                     return rc;
+                }
             }
         }
 
-        g_hash_table_destroy(groups);
-        g_array_free(extents_to_rebuild, TRUE);
-        g_hash_table_destroy(frequency);
+        rebuild_scheduler_free(sched);
         dss_res_free(layouts, n_layout);
     }
 

@@ -26,6 +26,7 @@
 
 #include "phobos_admin.h"
 #include "pho_types.h"
+#include "pho_type_utils.h"
 
 #include <glib.h>
 
@@ -40,6 +41,14 @@ struct rebuild_extent {
 struct group_key {
     int n_media;
     struct pho_id media[];
+};
+
+struct rebuild_scheduler {
+    struct group_key *curr_media; /**< Currents media being used */
+    GPtrArray *curr_extents;      /**< Extents being rebuilt */
+    GHashTable *pending_groups;   /**< Remaining groups to rebuild */
+    GArray *extents_to_rebuild;   /**< All the extents to rebuild */
+    GHashTable *frequency;        /**< Frequency of occurrence of each media */
 };
 
 static inline guint group_key_hash(gconstpointer data)
@@ -81,20 +90,17 @@ int rebuild_copy(struct rebuild_extent *rebuild_extent);
  * Retrieve the extents to rebuild for each copy and computes the frequency
  * of occurrence of all the media we can use to rebuild that extent.
  *
- * @param[in]     med                  The medium to rebuild
- * @param[in]     layouts              All the layouts on \p med
- * @param[in]     n_layout             The number of layouts
- * @param[in/out] frequency            Hashtable with the frequency of each
- *                                     medium
- * @param[in/out] extents_to_rebuild   The extents to rebuild
+ * @param[in]     med       The medium to rebuild
+ * @param[in]     layouts   All the layouts on \p med
+ * @param[in]     n_layout  The number of layouts
+ * @param[in/out] sched     Rebuild scheduler
  *
  * @return 0 on success, negated errno on failure
  */
 int collect_rebuild_extents_and_frequency(struct pho_id *med,
                                           struct layout_info *layouts,
                                           int n_layout,
-                                          GHashTable *frequency,
-                                          GArray *extents_to_rebuild);
+                                          struct rebuild_scheduler *sched);
 
 /**
  * Group rebuild extents by the media needed to rebuild them.
@@ -105,14 +111,9 @@ int collect_rebuild_extents_and_frequency(struct pho_id *med,
  *
  * Groups are appended to \p groups.
  *
- * @param[in/out] groups               All the different groups to rebuild
- * @param[in]     extents_to_rebuild   All the extents to rebuild
- * @param[in]     frequency            Frequency of occurrence of each media
- *
- * @return 0 on success, negated errno on failure
+ * @param[in/out] sched  rebuild scheduler containing collected items
  */
-void group_extents(GHashTable *groups, GArray *extents_to_rebuild,
-                   GHashTable *frequency);
+void group_extents(struct rebuild_scheduler *sched);
 
 /**
  * Sort each pending rebuild group by extent creation time.
@@ -122,6 +123,33 @@ void group_extents(GHashTable *groups, GArray *extents_to_rebuild,
  *
  * @param[in] groups  pending groups
  */
-void sort_extents_by_creation_time(GHashTable *groups);
+void sort_extents_by_creation_time(struct rebuild_scheduler *sched);
+
+/**
+ * Allocate and initialize a rebuild scheduler.
+ *
+ * @return a new scheduler to free with rebuild_scheduler_free()
+ */
+struct rebuild_scheduler *rebuild_scheduler_new(void);
+
+/**
+ * Free a rebuild scheduler and all groups/items owned by it.
+ *
+ * @param[in] sched  scheduler returned by rebuild_scheduler_new()
+ */
+void rebuild_scheduler_free(struct rebuild_scheduler *sched);
+
+/**
+ * Select the next group of rebuild items to process.
+ *
+ * The returned array remains owned by \p sched and is valid until the next call
+ * to rebuild_scheduler_next() or rebuild_scheduler_free().
+ *
+ * @param[in/out] sched  rebuild scheduler
+ * @param[out]    out    selected group items when true is returned
+ *
+ * @return true when a group was selected, false when no pending group remains
+ */
+bool rebuild_scheduler_next(struct rebuild_scheduler *sched, GPtrArray **out);
 
 #endif

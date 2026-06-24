@@ -112,8 +112,8 @@ static void compute_frequency(GPtrArray *avail_extents, GHashTable *frequency)
 
 int collect_rebuild_extents_and_frequency(struct pho_id *med,
                                           struct layout_info *layouts,
-                                          int n_layout, GHashTable *frequency,
-                                          GArray *extents_to_rebuild)
+                                          int n_layout,
+                                          struct rebuild_scheduler *sched)
 {
     int rc;
 
@@ -131,8 +131,8 @@ int collect_rebuild_extents_and_frequency(struct pho_id *med,
             if (rc)
                 return rc;
 
-            compute_frequency(rebuild_extent.avail_extents, frequency);
-            g_array_append_val(extents_to_rebuild, rebuild_extent);
+            compute_frequency(rebuild_extent.avail_extents, sched->frequency);
+            g_array_append_val(sched->extents_to_rebuild, rebuild_extent);
         }
     }
 
@@ -187,8 +187,8 @@ static struct group_key *new_group_key(struct extent **extents,
     return key;
 }
 
-static void append_item_to_group(GHashTable *groups, struct group_key *key,
-                                 struct rebuild_extent *rebuild_extent)
+static void append_extent_to_group(GHashTable *groups, struct group_key *key,
+                                   struct rebuild_extent *rebuild_extent)
 {
     GPtrArray *group_rebuild_extent;
 
@@ -203,12 +203,11 @@ static void append_item_to_group(GHashTable *groups, struct group_key *key,
     g_ptr_array_add(group_rebuild_extent, rebuild_extent);
 }
 
-void group_extents(GHashTable *groups, GArray *extents_to_rebuild,
-                   GHashTable *frequency)
+void group_extents(struct rebuild_scheduler *sched)
 {
-    for (int i = 0; i < extents_to_rebuild->len; i++) {
+    for (int i = 0; i < sched->extents_to_rebuild->len; i++) {
         struct rebuild_extent *rebuild_extent =
-            &g_array_index(extents_to_rebuild, struct rebuild_extent, i);
+            &g_array_index(sched->extents_to_rebuild, struct rebuild_extent, i);
         struct extent **extents = NULL;
         struct group_key *key;
         int n_extents;
@@ -229,7 +228,7 @@ void group_extents(GHashTable *groups, GArray *extents_to_rebuild,
         } else {
             struct extent *extent;
 
-            extent = choose_media_with_max_frequency(frequency,
+            extent = choose_media_with_max_frequency(sched->frequency,
                                                      rebuild_extent);
             n_extents = 1;
             extents = &extent;
@@ -237,7 +236,7 @@ void group_extents(GHashTable *groups, GArray *extents_to_rebuild,
 
         key = new_group_key(extents, n_extents);
 
-        append_item_to_group(groups, key, rebuild_extent);
+        append_extent_to_group(sched->pending_groups, key, rebuild_extent);
     }
 }
 
@@ -265,16 +264,101 @@ static gint cmp_timeval(gconstpointer _a, gconstpointer _b)
     return 0;
 }
 
-void sort_extents_by_creation_time(GHashTable *groups)
+void sort_extents_by_creation_time(struct rebuild_scheduler *sched)
 {
     GHashTableIter iter;
     gpointer key;
     gpointer value;
 
-    g_hash_table_iter_init(&iter, groups);
+    g_hash_table_iter_init(&iter, sched->pending_groups);
     while (g_hash_table_iter_next(&iter, &key, &value)) {
         GPtrArray *array = value;
 
         g_ptr_array_sort(array, cmp_timeval);
     }
+}
+
+static void free_current_group(struct rebuild_scheduler *sched)
+{
+    free(sched->curr_media);
+    if (sched->curr_extents)
+        g_ptr_array_free(sched->curr_extents, true);
+
+    sched->curr_media = NULL;
+    sched->curr_extents = NULL;
+}
+
+static void select_group(struct rebuild_scheduler *sched,
+                         struct group_key *key, GPtrArray *extents_to_rebuild,
+                         GPtrArray **out)
+{
+    g_hash_table_steal(sched->pending_groups, key);
+    free_current_group(sched);
+
+    sched->curr_media = key;
+    sched->curr_extents = extents_to_rebuild;
+    *out = extents_to_rebuild;
+}
+
+bool rebuild_scheduler_next(struct rebuild_scheduler *sched, GPtrArray **out)
+{
+    GHashTableIter iter;
+    gpointer value_ptr;
+    gpointer key_ptr;
+
+    if (g_hash_table_size(sched->pending_groups) == 0)
+        return false;
+
+    g_hash_table_iter_init(&iter, sched->pending_groups);
+    if (!g_hash_table_iter_next(&iter, &key_ptr, &value_ptr))
+        return false;
+
+    select_group(sched, key_ptr, value_ptr, out);
+
+    return true;
+}
+
+static void rebuild_extent_clear(void *data)
+{
+    struct rebuild_extent *rebuild_extent = data;
+
+    g_ptr_array_free(rebuild_extent->avail_extents, true);
+}
+
+static void _g_ptr_array_free(void *data)
+{
+    GPtrArray *array = data;
+
+    g_ptr_array_free(array, true);
+}
+
+struct rebuild_scheduler *rebuild_scheduler_new(void)
+{
+    struct rebuild_scheduler *sched;
+
+    sched = xmalloc(sizeof(*sched));
+
+    sched->frequency = g_hash_table_new_full(g_pho_id_hash, g_pho_id_equal,
+                                             free, NULL);
+    sched->extents_to_rebuild = g_array_new(FALSE, FALSE,
+                                            sizeof(struct rebuild_extent));
+    g_array_set_clear_func(sched->extents_to_rebuild, rebuild_extent_clear);
+
+    sched->pending_groups = g_hash_table_new_full(group_key_hash,
+                                                  group_key_equal,
+                                                  free, _g_ptr_array_free);
+    sched->curr_media = NULL;
+    sched->curr_extents = NULL;
+
+    return sched;
+}
+
+void rebuild_scheduler_free(struct rebuild_scheduler *sched)
+{
+    g_hash_table_destroy(sched->frequency);
+    g_hash_table_destroy(sched->pending_groups);
+    free_current_group(sched);
+    g_array_free(sched->extents_to_rebuild, true);
+
+    free(sched);
 }
