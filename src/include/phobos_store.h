@@ -222,13 +222,16 @@ struct pho_xfer_copy_params {
  * Otherwise, all missing extents are rebuilt.
  */
 struct pho_xfer_rebuild_params {
-    struct pho_xfer_get_params get; /**< Get parameters to use to rebuild */
-    struct pho_xfer_put_params put; /**< Put parameters to use to rebuild */
-    const int *extents_idx;         /**< List of extent index to rebuild
-                                      *  XXX: works only with one target per
-                                      *  xfer
-                                      */
+    struct pho_xfer_get_params get;  /**< Get parameters to use to rebuild */
+    struct pho_xfer_put_params put;  /**< Put parameters to use to rebuild */
+    const int *extents_idx;          /**< List of extent index to rebuild
+                                       *  XXX: works only with one target per
+                                       *  xfer
+                                       */
     size_t n_extents;
+    const struct pho_id *media_read; /**< Media to read from. Only supported
+                                       *  with a single extent in extents_idx.
+                                       */
 };
 
 /**

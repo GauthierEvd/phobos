@@ -59,6 +59,10 @@ int rebuild_copy(struct rebuild_extent *rebuild_extent)
     extents_idx[0] = rebuild_extent->extent_to_rebuild->layout_idx;
     xfer.xd_params.rebuild.extents_idx = extents_idx;
 
+    if (rebuild_extent->media_to_read)
+        xfer.xd_params.rebuild.media_read =
+            pho_id_dup(rebuild_extent->media_to_read);
+
     rc = phobos_copy_rebuild(&xfer, 1);
     if (rc)
         pho_error(rc, "Failed to rebuild copy");
@@ -232,6 +236,10 @@ void group_extents(struct rebuild_scheduler *sched)
                                                      rebuild_extent);
             n_extents = 1;
             extents = &extent;
+            /* XXX: For now, we are only in this case for RAID1, so we only
+             * need one read medium.
+             */
+            rebuild_extent->media_to_read = &extent->media;
         }
 
         key = new_group_key(extents, n_extents);

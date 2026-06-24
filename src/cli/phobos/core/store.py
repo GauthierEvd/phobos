@@ -33,7 +33,7 @@ from ctypes import (byref, c_bool, c_char_p, c_int, c_ssize_t, c_void_p, cast,
                     c_size_t)
 from typing import Optional
 
-from phobos.core.ffi import (LIBPHOBOS, DeprecatedObjectInfo, ObjectInfo,
+from phobos.core.ffi import (LIBPHOBOS, DeprecatedObjectInfo, Id, ObjectInfo,
                              StringArray, CopyInfo)
 from phobos.core.const import (PHO_XFER_OBJ_REPLACE, PHO_XFER_OBJ_BEST_HOST, # pylint: disable=no-name-in-module
                                PHO_XFER_OBJ_HARD_DEL, PHO_XFER_COPY_HARD_DEL,
@@ -356,9 +356,10 @@ class XferRebuildParams(Structure): # pylint: disable=too-few-public-methods, to
         ("put", XferPutParams),
         ("extents_idx", POINTER(c_int)),
         ("n_extents", c_size_t),
+        ("media_read", POINTER(Id)),
     ]
 
-    def __init__(self, get, put, extents_idx=None):
+    def __init__(self, get, put, extents_idx=None, media_read=None):
         super().__init__()
         self.get = get
         self.put = put
@@ -370,6 +371,10 @@ class XferRebuildParams(Structure): # pylint: disable=too-few-public-methods, to
             self.extents_idx = None
             self.n_extents = 0
 
+        if media_read:
+            self.media_read = pointer(media_read)
+        else:
+            self.media_read = None
 
 class RebuildParams(namedtuple('RebuildParams', '')):
     """

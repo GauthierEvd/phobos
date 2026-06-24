@@ -265,6 +265,11 @@ static int layout_raid4_rebuild(struct pho_data_processor *rebuilder)
 
     ENTRY;
 
+    if (rebuilder->xfer->xd_params.rebuild.media_read != NULL) {
+        pho_error(-EINVAL, "Rebuild media_read is not supported by raid4.");
+        return -EINVAL;
+    }
+
     if (rebuilder->xfer->xd_params.rebuild.n_extents > 0 &&
         !rebuilder_validate_extent_list(rebuilder, 2, 1)) {
         pho_error(-EINVAL, "The list of extents to rebuild is invalid.");

@@ -506,6 +506,55 @@ static int layout_raid1_erase(struct pho_data_processor *eraser)
     return rc;
 }
 
+static bool media_read_in_same_split(struct layout_info *layout,
+                                     const struct pho_id *media,
+                                     size_t split,
+                                     size_t n_extents_per_split)
+{
+    size_t first_excluded_idx = (split + 1) * n_extents_per_split;
+    size_t first_idx = split * n_extents_per_split;
+
+    for (int i = 0; i < layout->ext_count; i++) {
+        struct extent *extent = &layout->extents[i];
+
+        if (extent->layout_idx >= first_idx &&
+            extent->layout_idx < first_excluded_idx &&
+            pho_id_equal(&extent->media, media))
+            return true;
+    }
+
+    return false;
+}
+
+static bool rebuilder_validate_media_read(struct pho_data_processor *proc,
+                                          size_t n_extents_per_split)
+{
+    struct pho_xfer_rebuild_params *params = &proc->xfer->xd_params.rebuild;
+    struct extent *rebuilt_extent;
+    size_t split;
+
+    if (params->media_read == NULL)
+        return true;
+
+    if (params->n_extents != 1)
+        return false;
+
+    rebuilt_extent = extent_from_layout_idx(proc->src_layout->extents,
+                                            proc->src_layout->ext_count,
+                                            params->extents_idx[0]);
+
+    /* Can't read from an extent if we need to rebuild it*/
+    if (pho_id_equal(&rebuilt_extent->media, params->media_read))
+        return false;
+
+    split = params->extents_idx[0] / n_extents_per_split;
+
+    /* Check that the media_read is in the same split that the extent to
+     * rebuild
+     */
+    return media_read_in_same_split(proc->src_layout, params->media_read,
+                                    split, n_extents_per_split);
+}
 static int layout_raid1_rebuild(struct pho_data_processor *rebuilder)
 {
     struct raid_io_context *io_context;
@@ -521,6 +570,11 @@ static int layout_raid1_rebuild(struct pho_data_processor *rebuilder)
     if (rebuilder->xfer->xd_params.rebuild.n_extents > 0 &&
         !rebuilder_validate_extent_list(rebuilder, 1, repl_count - 1)) {
         pho_error(-EINVAL, "The list of extents to rebuild is invalid.");
+        return -EINVAL;
+    }
+
+    if (!rebuilder_validate_media_read(rebuilder, repl_count)) {
+        pho_error(-EINVAL, "The media to read from are invalid.");
         return -EINVAL;
     }
 

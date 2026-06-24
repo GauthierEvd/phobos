@@ -135,8 +135,8 @@ GPtrArray *raid_get_extents_to_rebuild_from(struct layout_info *lyt,
 }
 
 /** Return the extent with the corresponding layout_idx or NULL */
-static struct extent *extent_from_layout_idx(struct extent *extents,
-                                             int ext_count, int layout_idx)
+struct extent *extent_from_layout_idx(struct extent *extents,
+                                      int ext_count, int layout_idx)
 {
     int i;
 
@@ -753,6 +753,25 @@ static bool layout_idx_in_extent_list(struct pho_data_processor *proc,
     return false;
 }
 
+static bool rebuilder_can_read_extent(struct pho_data_processor *proc,
+                                      size_t n_extents_per_split,
+                                      struct extent *extent)
+{
+    struct pho_xfer_rebuild_params *params = &proc->xfer->xd_params.rebuild;
+
+    if (!is_rebuilder(proc))
+        return true;
+
+    if (params->n_extents > 0 &&
+        layout_idx_in_extent_list(proc, extent->layout_idx))
+        return false;
+
+    if (params->media_read && !pho_id_equal(params->media_read, &extent->media))
+        return false;
+
+    return true;
+}
+
 /* Retrieve the number of extents available to read from.
  * If proc is a REBUILDER and a list of extents to rebuild is specified,
  * also check that these extents are not requested for rebuild.
@@ -769,13 +788,14 @@ static size_t current_split_read_alloc_n_extent(struct pho_data_processor *proc,
     for (idx = io_context->current_split * n_extents_per_split;
          idx < (io_context->current_split + 1) * n_extents_per_split;
          idx++) {
-        if (!extent_from_layout_idx(proc->src_layout->extents,
-                                    proc->src_layout->ext_count, idx))
+        struct extent *extent =
+            extent_from_layout_idx(proc->src_layout->extents,
+                                   proc->src_layout->ext_count, idx);
+
+        if (!extent)
             continue;
 
-        if (is_rebuilder(proc) &&
-            proc->xfer->xd_params.rebuild.n_extents > 0 &&
-            layout_idx_in_extent_list(proc, idx))
+        if (!rebuilder_can_read_extent(proc, n_extents_per_split, extent))
             continue;
 
         n_extents++;
@@ -816,17 +836,14 @@ static void raid_reader_eraser_build_allocation_req(
     for (layout_idx = io_context->current_split * n_extents_per_split;
          layout_idx < (io_context->current_split + 1) * n_extents_per_split;
          layout_idx++) {
-        /* Don't use the extents specify in the list to rebuild for reading */
-        if (is_rebuilder(proc) &&
-            proc->xfer->xd_params.rebuild.n_extents > 0 &&
-            layout_idx_in_extent_list(proc, layout_idx))
-            continue;
-
         struct extent *extent =
             extent_from_layout_idx(proc->src_layout->extents,
                                    proc->src_layout->ext_count, layout_idx);
 
         if (!extent)
+            continue;
+
+        if (!rebuilder_can_read_extent(proc, n_extents_per_split, extent))
             continue;
 
         req->ralloc->med_ids[read_alloc_med_idx]->family = extent->media.family;

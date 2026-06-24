@@ -269,4 +269,7 @@ GPtrArray *raid_get_extents_to_rebuild_from(struct layout_info *lyt,
                                             int n_extents_per_split,
                                             struct extent *extent_to_rebuild);
 
+struct extent *extent_from_layout_idx(struct extent *extents,
+                                      int ext_count, int layout_idx);
+
 #endif

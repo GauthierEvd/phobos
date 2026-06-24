@@ -2776,6 +2776,7 @@ static void xfer_rebuild_param_clean(struct pho_xfer_desc *xfer)
     string_array_free(&xfer->xd_params.rebuild.put.tags);
     pho_attrs_free(&xfer->xd_params.rebuild.put.lyt_params);
     free((void *) xfer->xd_params.rebuild.extents_idx);
+    free((void *)xfer->xd_params.rebuild.media_read);
 }
 
 static void (*xfer_param_cleaner[PHO_XFER_OP_LAST])(struct pho_xfer_desc *) = {

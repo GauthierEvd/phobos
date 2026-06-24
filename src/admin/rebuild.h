@@ -36,6 +36,7 @@ struct rebuild_extent {
     GPtrArray *avail_extents;         /**< Extents available to rebuild from */
     int n_data_extents;               /**< Number of extents needed to rebuild
                                         */
+    struct pho_id *media_to_read;     /**< Selected media to read from */
 };
 
 struct group_key {
