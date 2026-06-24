@@ -27,6 +27,7 @@
 #endif
 
 #include <errno.h>
+#include <getopt.h>
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -50,42 +51,76 @@ static int parse_extent_idx(const char *str, int *idx)
     return 0;
 }
 
+static void set_media_read(const char *name, struct pho_id *media_read)
+{
+    media_read->family = PHO_RSC_DIR;
+    pho_id_name_set(media_read, name, "legacy");
+}
+
 int main(int argc, char **argv)
 {
+    static struct option long_options[] = {
+        {"media-read", required_argument, 0, 'm'},
+        {0,            0,                 0,  0 },
+    };
     struct pho_xfer_target target = {0};
     struct pho_xfer_desc xfer = {0};
+    struct pho_id media_read = {0};
+    bool has_media_read = false;
     int *extents_idx = NULL;
-    size_t n_extents;
+    size_t n_extents = 0;
     int rc;
+    char c;
 
-    if (argc < 4) {
-        fprintf(stderr, "usage: %s object_id copy_name extent_idx...\n",
-                argv[0]);
+    while ((c = getopt_long(argc, argv, "m:", long_options, NULL)) != -1) {
+        switch (c) {
+        case 'm':
+            set_media_read(optarg, &media_read);
+            has_media_read = true;
+            break;
+        default:
+            fprintf(stderr, "usage: %s [--media-read name] object_id "
+                            "copy_name extent_idx...\n", argv[0]);
+            return -EINVAL;
+        }
+    }
+
+    argv += optind;
+    argc -= optind;
+
+    if (argc < 2) {
+        fprintf(stderr, "usage: %s [--media-read name] object_id copy_name "
+                        "extent_idx...\n", argv[0]);
         return -EINVAL;
     }
 
-    n_extents = argc - 3;
-    extents_idx = xcalloc(n_extents, sizeof(*extents_idx));
+    target.xt_objid = argv[0];
+    n_extents = argc - 2;
+    if (n_extents > 0)
+        extents_idx = xcalloc(n_extents, sizeof(*extents_idx));
 
     for (size_t i = 0; i < n_extents; i++) {
-        rc = parse_extent_idx(argv[i + 3], &extents_idx[i]);
+        const char *extent_arg = argv[2 + i];
+
+        rc = parse_extent_idx(extent_arg, &extents_idx[i]);
         if (rc) {
-            fprintf(stderr, "invalid extent index '%s'\n", argv[i + 3]);
+            fprintf(stderr, "invalid extent index '%s'\n", extent_arg);
             free(extents_idx);
             return -rc;
         }
     }
 
-    target.xt_objid = argv[1];
-
     xfer.xd_op = PHO_XFER_OP_REBUILD;
     xfer.xd_ntargets = 1;
     xfer.xd_targets = &target;
-    xfer.xd_params.rebuild.put.copy_name = argv[2];
-    xfer.xd_params.rebuild.get.copy_name = argv[2];
+    xfer.xd_params.rebuild.put.copy_name = argv[1];
+    xfer.xd_params.rebuild.get.copy_name = argv[1];
     xfer.xd_params.rebuild.get.scope = DSS_OBJ_ALIVE;
-    xfer.xd_params.rebuild.extents_idx = extents_idx;
+    xfer.xd_params.rebuild.extents_idx = n_extents > 0 ? extents_idx : NULL;
     xfer.xd_params.rebuild.n_extents = n_extents;
+
+    if (has_media_read)
+        xfer.xd_params.rebuild.media_read = pho_id_dup(&media_read);
 
     rc = phobos_init();
     if (rc) {

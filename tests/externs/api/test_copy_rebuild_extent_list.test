@@ -353,9 +353,40 @@ function test_rebuild_extent_list_raid1_invalid
     return 0
 }
 
+function test_rebuild_media_read_raid1
+{
+    $phobos put -f dir -l raid1 --lyt-params=repl_count=3 $INPUT_FILE oid
+
+    local media=($(get_extent_info oid source media_name))
+
+    $LOG_COMPILER $test_bin oid source --media-read "${media[1]}" 0 2 &&
+        error "rebuild with media_read and multiple extent_idx should" \
+              "have failed"
+
+    $LOG_COMPILER $test_bin oid source --media-read "${media[0]}" 0 &&
+        error "rebuild using the media of the extent_idx should have failed"
+
+    $LOG_COMPILER $test_bin oid source --media-read "${media[3]}" 0 &&
+        error "rebuild using a media from another split should have failed"
+
+    local extent_before=$(get_extent 0)
+
+    $LOG_COMPILER $test_bin oid source --media-read "${media[1]}" 0
+
+    local extent_after=$(get_extent 0)
+    if [[ -z $extent_after || $extent_after == $extent_before ]]; then
+        error "Extent 0 should have been rebuilt with media_read"
+    fi
+}
+
 function test_rebuild_extent_list_raid4_invalid
 {
     $phobos put -f dir -l raid4 $INPUT_FILE oid
+
+    local media=($(get_extent_info oid source media_name))
+
+    $LOG_COMPILER $test_bin oid source --media-read "${media[1]}" 0 &&
+        error "raid4 rebuild with media_read should have failed"
 
     # Check that we cannot ask to rebuild all the extents of a split
     $LOG_COMPILER $test_bin oid source 0 1 2 &&
@@ -414,6 +445,9 @@ TESTS=("setup; \
         cleanup"
        "setup_split raid1; \
             test_rebuild_extent_list_raid1_invalid; \
+        cleanup_split"
+       "setup_split raid1; \
+            test_rebuild_media_read_raid1; \
         cleanup_split"
        "setup_split raid4; \
             test_rebuild_extent_list_raid4_invalid; \
