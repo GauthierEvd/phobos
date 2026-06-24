@@ -2280,38 +2280,37 @@ static void *lrs_dev_thread(void *tdata)
             thread->state = THREAD_STOPPED;
         }
 
-        if (!g_hash_table_size(device->ld_ongoing_io)) {
-            if (device->ld_needs_sync) {
-                if (dev_perform_sync(device, thread))
-                    goto end_thread;
+        if (!g_hash_table_size(device->ld_ongoing_io) &&
+            device->ld_needs_sync) {
+            if (dev_perform_sync(device, thread))
+                goto end_thread;
+        }
+
+        if (device->ld_sub_request && !device->ld_needs_sync) {
+            pho_req_t *req = device->ld_sub_request->reqc->req;
+
+            if (pho_request_is_format(req))
+                rc = dev_handle_format(device);
+            else if (pho_request_is_read(req) || pho_request_is_write(req))
+                rc = dev_handle_read_write(device);
+            else {
+                const struct pho_id *dev_id = lrs_dev_id(device);
+
+                pho_error(rc = -EINVAL,
+                          "device thread (family '%s', name '%s', library "
+                          "'%s'): invalid type (%s) in ld_sub_request",
+                          rsc_family2str(dev_id->family), dev_id->name,
+                          dev_id->library, pho_srl_request_kind_str(req));
             }
 
-            if (device->ld_sub_request) {
-                pho_req_t *req = device->ld_sub_request->reqc->req;
+            if (rc) {
+                const struct pho_id *dev_id = lrs_dev_id(device);
 
-                if (pho_request_is_format(req))
-                    rc = dev_handle_format(device);
-                else if (pho_request_is_read(req) || pho_request_is_write(req))
-                    rc = dev_handle_read_write(device);
-                else {
-                    const struct pho_id *dev_id = lrs_dev_id(device);
-
-                    pho_error(rc = -EINVAL,
-                              "device thread (family '%s', name '%s', library "
-                              "'%s'): invalid type (%s) in ld_sub_request",
-                              rsc_family2str(dev_id->family), dev_id->name,
-                              dev_id->library, pho_srl_request_kind_str(req));
-                }
-
-                if (rc) {
-                    const struct pho_id *dev_id = lrs_dev_id(device);
-
-                    LOG_GOTO(end_thread, thread->status = rc,
-                             "device thread (family '%s', name '%s', library "
-                             "'%s'): fatal error handling ld_sub_request",
-                             rsc_family2str(dev_id->family), dev_id->name,
-                             dev_id->library);
-                }
+                LOG_GOTO(end_thread, thread->status = rc,
+                         "device thread (family '%s', name '%s', library "
+                         "'%s'): fatal error handling ld_sub_request",
+                         rsc_family2str(dev_id->family), dev_id->name,
+                         dev_id->library);
             }
         }
 
