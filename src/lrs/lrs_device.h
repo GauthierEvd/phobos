@@ -218,6 +218,7 @@ struct dev_stats {
     struct pho_stat *tosync_extents;
     struct pho_stat *total_tosync_size;
     struct pho_stat *total_tosync_extents;
+    struct pho_stat *nb_ongoing_io;
 };
 
 /**
@@ -361,6 +362,9 @@ static inline void dev_clean_io(struct lrs_dev *dev, int socket_id)
     if (!g_hash_table_remove(dev->ld_ongoing_io, GINT_TO_POINTER(socket_id)))
         g_hash_table_remove(dev->ld_ongoing_partial_io_waiting_sync,
                             GINT_TO_POINTER(socket_id));
+    else
+        pho_stat_set(dev->stats.nb_ongoing_io,
+                     g_hash_table_size(dev->ld_ongoing_io));
 }
 
 static inline bool dev_is_failed(struct lrs_dev *dev)

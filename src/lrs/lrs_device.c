@@ -156,6 +156,9 @@ int dev_stats_init(struct lrs_dev *dev)
                                                       DEV_STATS_NS,
                                                       "total_tosync_extents",
                                                       tags);
+    dev->stats.nb_ongoing_io = pho_stat_create(PHO_STAT_GAUGE, DEV_STATS_NS,
+                                               "nb_ongoing_io", tags);
+
     free(tags);
     return 0;
 }
@@ -180,6 +183,7 @@ void dev_stats_destroy(struct lrs_dev *dev)
     pho_stat_destroy(&dev->stats.tosync_extents);
     pho_stat_destroy(&dev->stats.total_tosync_size);
     pho_stat_destroy(&dev->stats.total_tosync_extents);
+    pho_stat_destroy(&dev->stats.nb_ongoing_io);
 }
 
 static int lrs_dev_init_from_info(struct lrs_dev_hdl *handle,
@@ -1944,6 +1948,8 @@ out_free:
     if (!io_ended && !sub_request_requeued) {
         g_hash_table_insert(dev->ld_ongoing_io, GINT_TO_POINTER(socket_id),
                             grouping);
+        pho_stat_set(dev->stats.nb_ongoing_io,
+                     g_hash_table_size(dev->ld_ongoing_io));
         grouping = NULL;
     }
 
@@ -2226,6 +2232,7 @@ static void dev_thread_end(struct lrs_dev *device)
         dev_cleanup_on_error(device);
 
     g_hash_table_remove_all(device->ld_ongoing_io);
+    pho_stat_set(device->stats.nb_ongoing_io, 0);
     g_hash_table_remove_all(device->ld_ongoing_partial_io_waiting_sync);
 }
 

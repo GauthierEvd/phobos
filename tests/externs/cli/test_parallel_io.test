@@ -132,6 +132,7 @@ function test_parallel_io()
             invoke_lrs
 
             # starting IOs
+            pids=()
             for io in `seq 0 ${highest_io}`; do
                 writer_sleep_after_recv_alloc 6 put -f ${family} ${FILES[0]} \
                     obj_${nb_parallel}_${highest_io}_${io} &
@@ -151,15 +152,46 @@ function test_parallel_io()
             if [[ "$family" == "dir" ]]; then
                 $valg_phobos dir status -o name,ongoing_io |
                     grep ${nb_parallel_running_io} | grep ${dir}
+                stat_nb_io=$($valg_phobos stats dev.nb_ongoing_io \
+                                --tags family=dir |
+                                awk '{print $(NF)}' | cut -d '=' -f 2)
             else
                 $valg_phobos drive status -o name,ongoing_io |
                     grep ${nb_parallel_running_io} | grep ${drive}
+                stat_nb_io=$($valg_phobos stats dev.nb_ongoing_io \
+                                --tags family=tape |
+                                awk '{print $(NF)}' | cut -d '=' -f 2)
+            fi
+
+            if [[ "${stat_nb_io}" != "${nb_parallel_running_io}" ]]; then
+                error "nb_ongoing_io stat must be ${nb_parallel_running_io}," \
+                    "we get ${stat_nb_io}"
             fi
 
             # waiting the end of IOs
             for io in `seq 0 ${highest_io}`; do
                 wait ${pids[${io}]}
             done
+
+            # checking no more running IOs
+            if [[ "$family" == "dir" ]]; then
+                $valg_phobos dir status -o name,ongoing_io |
+                    grep 0 | grep ${dir}
+                stat_nb_io=$($valg_phobos stats dev.nb_ongoing_io \
+                                 --tags family=dir |
+                                 awk '{print $(NF)}' | cut -d '=' -f 2)
+            else
+                $valg_phobos drive status -o name,ongoing_io |
+                    grep 0 | grep ${drive}
+                stat_nb_io=$($valg_phobos stats dev.nb_ongoing_io \
+                                --tags family=tape |
+                                awk '{print $(NF)}' | cut -d '=' -f 2)
+            fi
+
+            if [[ "${stat_nb_io}" != "0" ]]; then
+                error "nb_ongoing_io stat must be 0 at the end," \
+                    "we get ${stat_nb_io}"
+            fi
         done
     done
 }
@@ -189,11 +221,25 @@ function test_dir_unlimited_parallel_io()
     # checking nb parallel running IOs
     $valg_phobos dir status -o name,ongoing_io |
         grep ${NB_IO} | grep ${dir}
+    stat_nb_io=$($valg_phobos stats dev.nb_ongoing_io --tags family=dir |
+                     awk '{print $(NF)}' | cut -d '=' -f 2)
+    if [[ "${stat_nb_io}" != "${NB_IO}" ]]; then
+        error "nb_ongoing_io stat must be ${NB_IO}, we get ${stat_nb_io}"
+    fi
 
     # waiting the end of IOs
     for i in `seq 1 ${NB_IO}`; do
         wait ${pids[${i}]}
     done
+
+    # checking nb running IOs at the end
+    $valg_phobos dir status -o name,ongoing_io |
+        grep 0 | grep ${dir}
+    stat_nb_io=$($valg_phobos stats dev.nb_ongoing_io --tags family=dir |
+                     awk '{print $(NF)}' | cut -d '=' -f 2)
+    if [[ "${stat_nb_io}" != "0" ]]; then
+        error "nb_ongoing_io stat must be 0 at the end, we get ${stat_nb_io}"
+    fi
 }
 
 TESTS=(
