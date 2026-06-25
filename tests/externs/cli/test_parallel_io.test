@@ -52,6 +52,9 @@ function cleanup()
 # Execute a put command but sleep after having get the booking
 function writer_sleep_after_recv_alloc
 {
+    local sleep_duration=$1
+    shift
+
     (
         tmp_gdb_script=$(mktemp)
         trap "rm $tmp_gdb_script" EXIT
@@ -60,7 +63,7 @@ set breakpoint pending on
 break raid_writer_split_setup
 commands
 shell touch ${DIR_TEST_IN}/${!#}
-shell sleep 6
+shell sleep ${sleep_duration}
 continue
 end
 run $phobos $*
@@ -91,7 +94,7 @@ function test_dir_parallel_io()
 
             # starting IOs
             for io in `seq 0 ${highest_io}`; do
-                writer_sleep_after_recv_alloc put -f dir ${FILES[0]} \
+                writer_sleep_after_recv_alloc 6 put -f dir ${FILES[0]} \
                     obj_${nb_parallel}_${highest_io}_${io} &
                 pids+=("$!")
                 sleep 1
@@ -118,4 +121,39 @@ function test_dir_parallel_io()
     done
 }
 
-TESTS=("setup; test_dir_parallel_io; cleanup")
+function test_dir_unlimited_parallel_io()
+{
+    local NB_IO=100
+    local pids=()
+
+    export PHOBOS_LRS_nb_max_parallel_io="dir=0"
+    waive_lrs
+    invoke_lrs
+
+    for i in `seq 1 ${NB_IO}`; do
+        writer_sleep_after_recv_alloc 4 put -f dir ${FILES[0]} \
+            obj_unlimited_$i &
+        pids+=("$!")
+    done
+
+    # checking IOs are started
+    for i in `seq 1 ${NB_IO}`; do
+        while [ ! -f ${DIR_TEST_IN}/obj_unlimited_$i ]; do
+            sleep 1
+        done
+    done
+
+    # checking nb parallel running IOs
+    $valg_phobos dir status -o device,ongoing_io |
+        grep ${NB_IO} | grep ${dir}
+
+    # waiting the end of IOs
+    for i in `seq 1 ${NB_IO}`; do
+        wait ${pids[${i}]}
+    done
+}
+
+TESTS=(
+    "setup; test_dir_parallel_io; cleanup"
+    "setup; test_dir_unlimited_parallel_io; cleanup"
+)
