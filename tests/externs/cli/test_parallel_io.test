@@ -30,23 +30,61 @@ test_dir=$(dirname $(readlink -e $0))
 #                                    SETUP                                     #
 ################################################################################
 
-function setup()
+function start_dir()
 {
-    setup_tables
     invoke_lrs
-    setup_test_dirs
     dir="$(mktemp -d "$DIR_TEST_IN/test.pho.XXXX")"
     $phobos dir add ${dir}
     $phobos dir format --fs posix --unlock ${dir}
+}
+
+function start_tape()
+{
+    invoke_daemons
+    drive="$(get_lto_drives 6 1)"
+    medium="$(get_tapes L6 1)"
+
+    $phobos tape add -t lto6 $medium
+    $phobos drive add --unlock $drive
+    $phobos tape format --unlock $medium
+}
+
+function setup()
+{
+    setup_tables
+    setup_test_dirs
     setup_dummy_files 1 1k 1
+}
+
+function setup_dir()
+{
+    setup
+    start_dir
+}
+
+function setup_tape()
+{
+    setup
+    start_tape
 }
 
 function cleanup()
 {
-    waive_lrs
     drop_tables
     cleanup_dummy_files
     cleanup_test_dirs
+}
+
+function cleanup_dir()
+{
+    waive_lrs
+    cleanup
+}
+
+function cleanup_tape()
+{
+    waive_daemons
+    cleanup
 }
 
 # Execute a put command but sleep after having get the booking
@@ -73,8 +111,9 @@ EOF
     )
 }
 
-function test_dir_parallel_io()
+function test_parallel_io()
 {
+    local family=$1
     local pids=()
 
     for nb_parallel in `seq 1 3`; do
@@ -88,13 +127,13 @@ function test_dir_parallel_io()
 
             ((last_parallel_io=nb_parallel_running_io-1)) || true
 
-            export PHOBOS_LRS_nb_max_parallel_io="dir=${nb_parallel}"
+            export PHOBOS_LRS_nb_max_parallel_io="${family}=${nb_parallel}"
             waive_lrs
             invoke_lrs
 
             # starting IOs
             for io in `seq 0 ${highest_io}`; do
-                writer_sleep_after_recv_alloc 6 put -f dir ${FILES[0]} \
+                writer_sleep_after_recv_alloc 6 put -f ${family} ${FILES[0]} \
                     obj_${nb_parallel}_${highest_io}_${io} &
                 pids+=("$!")
                 sleep 1
@@ -109,9 +148,13 @@ function test_dir_parallel_io()
             done
 
             # checking nb parallel running IOs
-            $valg_phobos dir status -o device,ongoing_io |
-                grep ${nb_parallel_running_io} |
-                grep ${dir}
+            if [[ "$family" == "dir" ]]; then
+                $valg_phobos dir status -o name,ongoing_io |
+                    grep ${nb_parallel_running_io} | grep ${dir}
+            else
+                $valg_phobos drive status -o name,ongoing_io |
+                    grep ${nb_parallel_running_io} | grep ${drive}
+            fi
 
             # waiting the end of IOs
             for io in `seq 0 ${highest_io}`; do
@@ -144,7 +187,7 @@ function test_dir_unlimited_parallel_io()
     done
 
     # checking nb parallel running IOs
-    $valg_phobos dir status -o device,ongoing_io |
+    $valg_phobos dir status -o name,ongoing_io |
         grep ${NB_IO} | grep ${dir}
 
     # waiting the end of IOs
@@ -154,6 +197,10 @@ function test_dir_unlimited_parallel_io()
 }
 
 TESTS=(
-    "setup; test_dir_parallel_io; cleanup"
-    "setup; test_dir_unlimited_parallel_io; cleanup"
+    "setup_dir; test_parallel_io dir; cleanup_dir"
+    "setup_dir; test_dir_unlimited_parallel_io; cleanup_dir"
 )
+
+if [[ -w /dev/changer ]]; then
+    TESTS+=("setup_tape; test_parallel_io tape; cleanup_tape")
+fi
