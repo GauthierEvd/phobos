@@ -448,6 +448,48 @@ int layout_get_availability(struct layout_info lyt, struct copy_info *copy)
     return mod->ops->get_availability(lyt, copy);
 }
 
+int layout_get_replica_info(struct layout_info *lyt, int *n_data_extents,
+                            int *n_parity_extents)
+{
+    char layout_name[NAME_MAX];
+    struct layout_module *mod;
+    int rc;
+
+    rc = build_layout_name(lyt->layout_desc.mod_name, layout_name,
+                           sizeof(layout_name));
+    if (rc)
+        return rc;
+
+    /* Load new module if necessary */
+    rc = load_module(layout_name, sizeof(*mod), phobos_context(),
+                     (void **) &mod);
+    if (rc)
+        return rc;
+
+    return mod->ops->get_replica_info(lyt, n_data_extents, n_parity_extents);
+}
+
+GPtrArray *layout_get_extents_to_rebuild_from(struct layout_info *lyt,
+                                              struct extent *extent_to_rebuild)
+{
+    char layout_name[NAME_MAX];
+    struct layout_module *mod;
+    int rc;
+
+    rc = build_layout_name(lyt->layout_desc.mod_name, layout_name,
+                           sizeof(layout_name));
+    if (rc)
+        return NULL;
+
+    /* Load new module if necessary */
+    rc = load_module(layout_name, sizeof(*mod), phobos_context(),
+                     (void **) &mod);
+    if (rc)
+        return NULL;
+
+    return mod->ops->get_extents_to_rebuild_from(lyt, extent_to_rebuild);
+}
+
 void layout_destroy(struct pho_data_processor *proc)
 {
     int i;

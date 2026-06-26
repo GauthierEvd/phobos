@@ -377,6 +377,25 @@ static int layout_raid4_get_availability(struct layout_info layout,
     return 0;
 }
 
+static int layout_raid4_get_replica_info(struct layout_info *lyt,
+                                         int *n_data_extents,
+                                         int *n_parity_extents)
+{
+    (void) lyt;
+
+    *n_data_extents = 2;
+    *n_parity_extents = 1;
+
+    return 0;
+}
+
+static GPtrArray *layout_raid4_get_extents_to_rebuild_from(
+                                              struct layout_info *lyt,
+                                              struct extent *extent_to_rebuild)
+{
+    return raid_get_extents_to_rebuild_from(lyt, 3, extent_to_rebuild);
+}
+
 static const struct pho_layout_module_ops LAYOUT_RAID4_OPS = {
     .encode = layout_raid4_encode,
     .decode = layout_raid4_decode,
@@ -385,6 +404,8 @@ static const struct pho_layout_module_ops LAYOUT_RAID4_OPS = {
     .locate = layout_raid4_locate,
     .get_specific_attrs = NULL,
     .get_availability = layout_raid4_get_availability,
+    .get_replica_info = layout_raid4_get_replica_info,
+    .get_extents_to_rebuild_from = layout_raid4_get_extents_to_rebuild_from,
 };
 
 /** Layout module registration entry point */

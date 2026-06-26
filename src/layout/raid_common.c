@@ -105,6 +105,35 @@ int raid_get_nb_extent_to_rebuild(struct pho_data_processor *rebuilder)
     return (nb_split * nb_extent_per_split) - layout->ext_count;
 }
 
+GPtrArray *raid_get_extents_to_rebuild_from(struct layout_info *lyt,
+                                            int n_extents_per_split,
+                                            struct extent *extent_to_rebuild)
+{
+    GPtrArray *avail_extents = g_ptr_array_new();
+    int first_excluded_split_idx;
+    int first_split_idx;
+    int split;
+
+    split = extent_to_rebuild->layout_idx / n_extents_per_split;
+    first_split_idx = split * n_extents_per_split;
+    first_excluded_split_idx = (split + 1) * n_extents_per_split;
+
+    for (int i = 0; i < lyt->ext_count; i++) {
+        struct extent *_extent = &lyt->extents[i];
+
+        if (_extent->layout_idx < first_split_idx ||
+            _extent->layout_idx >= first_excluded_split_idx)
+            continue;
+
+        if (pho_id_equal(&extent_to_rebuild->media, &_extent->media))
+            continue;
+
+        g_ptr_array_add(avail_extents, _extent);
+    }
+
+    return avail_extents;
+}
+
 /** Return the extent with the corresponding layout_idx or NULL */
 static struct extent *extent_from_layout_idx(struct extent *extents,
                                              int ext_count, int layout_idx)

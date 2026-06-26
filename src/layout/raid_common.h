@@ -265,4 +265,8 @@ bool rebuilder_validate_extent_list(struct pho_data_processor *proc,
                                     size_t n_data_extents,
                                     size_t n_parity_extents);
 
+GPtrArray *raid_get_extents_to_rebuild_from(struct layout_info *lyt,
+                                            int n_extents_per_split,
+                                            struct extent *extent_to_rebuild);
+
 #endif

@@ -80,6 +80,14 @@ struct pho_layout_module_ops {
 
     /** Updates the status of an copy based on its extents */
     int (*get_availability)(struct layout_info lyt, struct copy_info *copy);
+
+    /** Retrieve the replica information of the layout */
+    int (*get_replica_info)(struct layout_info *lyt, int *n_data_extents,
+                            int *n_parity_extents);
+
+    /** Retrieve the extents available to rebuild from */
+    GPtrArray *(*get_extents_to_rebuild_from)(struct layout_info *lyt,
+                                              struct extent *extent_to_rebuild);
 };
 
 /** Operations provided by a given data processor.
@@ -420,6 +428,29 @@ int layout_get_specific_attrs(struct pho_io_descr *iod,
  * @return 0 on success, -errno on error.
  */
 int layout_get_availability(struct layout_info lyt, struct copy_info *copy);
+
+/**
+ * Retrieve the replica information of the layout.
+ *
+ * @param[in]  lyt               The layout to retrieve the info from
+ * @param[out] n_data_extents    The number of data extents for this layout
+ * @param[out] n_parity_extents  The number of parity extents for this layout
+ *
+ * @return 0 on success, -errno on error.
+ */
+int layout_get_replica_info(struct layout_info *lyt, int *n_data_extents,
+                            int *n_parity_extents);
+
+/**
+ * Retrive the extents available to rebuild /p extent.
+ *
+ * @param[in]     lyt            The layout to retrieve extents from
+ * @param[in]     extent         The extent to rebuild
+ *
+ * @return the available extents on success, NULL on error.
+ */
+GPtrArray *layout_get_extents_to_rebuild_from(struct layout_info *lyt,
+                                              struct extent *extent_to_rebuild);
 
 /**
  * Destroy this data processor and all associated resources.

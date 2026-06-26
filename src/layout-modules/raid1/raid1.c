@@ -670,6 +670,38 @@ end:
     return rc;
 }
 
+static int layout_raid1_get_replica_info(struct layout_info *lyt,
+                                         int *n_data_extents,
+                                         int *n_parity_extents)
+{
+    unsigned int repl_count;
+    int rc = 0;
+
+    *n_data_extents = 1;
+
+    rc = raid1_repl_count(lyt, &repl_count);
+    if (rc)
+        return rc;
+
+    *n_parity_extents = repl_count - 1;
+
+    return rc;
+}
+
+static GPtrArray *layout_raid1_get_extents_to_rebuild_from(
+                                            struct layout_info *lyt,
+                                            struct extent *extent_to_rebuild)
+{
+    unsigned int repl_count;
+    int rc;
+
+    rc = raid1_repl_count(lyt, &repl_count);
+    if (rc)
+        return NULL;
+
+    return raid_get_extents_to_rebuild_from(lyt, repl_count, extent_to_rebuild);
+}
+
 static const struct pho_layout_module_ops LAYOUT_RAID1_OPS = {
     .encode = layout_raid1_encode,
     .decode = layout_raid1_decode,
@@ -678,6 +710,8 @@ static const struct pho_layout_module_ops LAYOUT_RAID1_OPS = {
     .locate = layout_raid1_locate,
     .get_specific_attrs = layout_raid1_get_specific_attrs,
     .get_availability = layout_raid1_get_availability,
+    .get_replica_info = layout_raid1_get_replica_info,
+    .get_extents_to_rebuild_from = layout_raid1_get_extents_to_rebuild_from,
 };
 
 /** Layout module registration entry point */
