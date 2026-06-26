@@ -101,7 +101,6 @@ int main(int argc, char **argv)
 
     pho_xfer_desc_clean(&xfer);
     phobos_fini();
-    free(extents_idx);
 
     return -rc;
 }

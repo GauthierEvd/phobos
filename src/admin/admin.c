@@ -27,7 +27,6 @@
 #endif
 
 #include "phobos_admin.h"
-#include "phobos_store.h"
 
 #include <errno.h>
 #include <glib.h>
@@ -51,6 +50,7 @@
 #include "import.h"
 #include "lost.h"
 #include "utils.h"
+#include "rebuild.h"
 
 enum pho_cfg_params_admin {
     /* Actual admin parameters */
@@ -2950,42 +2950,11 @@ out_free:
     return rc;
 }
 
-static int rebuild_copy(struct layout_info *layout, struct pho_id *med)
+static void rebuild_extent_clear(void *data)
 {
-    struct pho_xfer_target target = {0};
-    struct pho_xfer_desc xfer = {0};
-    GArray *indexes;
-    int rc = 0;
-    int i;
+    struct rebuild_extent *rebuild_extent = data;
 
-    indexes = g_array_new(FALSE, FALSE, sizeof(int));
-
-    target.xt_objid = layout->oid;
-    target.xt_objuuid = layout->uuid;
-    target.xt_version = layout->version;
-
-    xfer.xd_ntargets = 1;
-    xfer.xd_targets = &target;
-    xfer.xd_params.rebuild.put.copy_name = layout->copy_name;
-    xfer.xd_params.rebuild.get.copy_name = layout->copy_name;
-    xfer.xd_params.rebuild.get.scope = DSS_OBJ_ALL;
-
-    for (i = 0; i < layout->ext_count; i++) {
-        if (pho_id_equal(med, &layout->extents[i].media))
-            g_array_append_val(indexes, layout->extents[i].layout_idx);
-    }
-
-    xfer.xd_params.rebuild.n_extents = indexes->len;
-    xfer.xd_params.rebuild.extents_idx = (int *) indexes->data;
-
-    rc = phobos_copy_rebuild(&xfer, 1);
-    if (rc)
-        pho_error(rc, "Failed to rebuild copy");
-
-    pho_xfer_desc_clean(&xfer);
-    g_array_free(indexes, TRUE);
-
-    return rc;
+    g_ptr_array_free(rebuild_extent->avail_extents, true);
 }
 
 int phobos_admin_media_rebuild(struct admin_handle *adm, struct media_info *med,
@@ -2998,6 +2967,9 @@ int phobos_admin_media_rebuild(struct admin_handle *adm, struct media_info *med,
     int i;
 
     for (i = 0; i < med_cnt; i++) {
+        GArray *extents_to_rebuild;
+        GHashTable *frequency;
+
         if (med[i].rsc.id.family == PHO_RSC_DIR) {
             rc = _normalize_path(med[i].rsc.id.name);
             if (rc)
@@ -3022,14 +2994,32 @@ int phobos_admin_media_rebuild(struct admin_handle *adm, struct media_info *med,
             return rc;
         }
 
-        for (int j = 0; j < n_layout; j++) {
-            struct layout_info *layout = &layouts[j];
+        frequency = g_hash_table_new(g_pho_id_hash, g_pho_id_equal);
+        extents_to_rebuild = g_array_new(FALSE, FALSE,
+                                         sizeof(struct rebuild_extent));
+        g_array_set_clear_func(extents_to_rebuild, rebuild_extent_clear);
 
-            rc = rebuild_copy(layout, &med[i].rsc.id);
+        rc = collect_rebuild_extents_and_frequency(&med[i].rsc.id, layouts,
+                                                   n_layout, frequency,
+                                                   extents_to_rebuild);
+        if (rc) {
+            g_array_free(extents_to_rebuild, TRUE);
+            g_hash_table_destroy(frequency);
+            dss_res_free(layouts, n_layout);
+            return rc;
+        }
+
+        for (int j = 0; j < extents_to_rebuild->len; j++) {
+            struct rebuild_extent *rebuild_extent =
+                &g_array_index(extents_to_rebuild, struct rebuild_extent, j);
+
+            rc = rebuild_copy(rebuild_extent);
             if (rc)
                 return rc;
         }
 
+        g_array_free(extents_to_rebuild, TRUE);
+        g_hash_table_destroy(frequency);
         dss_res_free(layouts, n_layout);
     }
 
