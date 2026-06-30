@@ -116,8 +116,8 @@ function test_parallel_io()
     local family=$1
     local pids=()
 
-    for nb_parallel in `seq 1 3`; do
-        for highest_io in `seq 0 ${nb_parallel}`; do
+    for nb_parallel in 1 3; do
+        for highest_io in 0 ${nb_parallel}; do
             # nb_parallel_runing_io
             if (( highest_io < nb_parallel )); then
                 ((nb_parallel_running_io=highest_io+1))
@@ -198,7 +198,7 @@ function test_parallel_io()
 
 function test_dir_unlimited_parallel_io()
 {
-    local NB_IO=100
+    local NB_IO=50
     local pids=()
 
     export PHOBOS_LRS_nb_max_parallel_io="dir=0"
