@@ -252,6 +252,12 @@ static bool current_write_per_grouping_greater_than_max(GPtrArray *devices,
     return false;
 }
 
+static bool ignore_grouping_on_dir(const struct req_container *reqc)
+{
+    return (enum rsc_family)reqc->req->walloc->family == PHO_RSC_DIR &&
+           !PHO_CFG_GET_BOOL(cfg_lrs, PHO_CFG_LRS, grouping_on_dir, false);
+}
+
 
 static int fifo_limited_grouping_peek_request(struct io_scheduler *io_sched,
                                               struct req_container **reqc)
@@ -269,7 +275,8 @@ new_elem:
     }
 
     if (pho_request_is_write(elem->reqc->req) &&
-        elem->reqc->req->walloc->grouping) {
+            (elem->reqc->req->walloc->grouping &&
+                !ignore_grouping_on_dir(elem->reqc))) {
         int cfg_max_write_per_grouping = max_write_per_grouping();
 
         if (cfg_max_write_per_grouping < 0) {

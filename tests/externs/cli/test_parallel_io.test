@@ -242,9 +242,86 @@ function test_dir_unlimited_parallel_io()
     fi
 }
 
+function test_dir_parallel_io_grouping_on_dir()
+{
+    local NB_IO=3
+    local pids=()
+
+    export PHOBOS_LRS_fifo_max_write_per_grouping=1
+    export PHOBOS_LRS_nb_max_parallel_io="dir=0"
+
+    # grouping on dir
+    export PHOBOS_LRS_grouping_on_dir="true"
+    waive_lrs
+    invoke_lrs
+
+    for i in `seq 1 ${NB_IO}`; do
+        writer_sleep_after_recv_alloc 4 put -f dir --grouping my_group \
+            ${FILES[0]} obj_unlimited_grouping_on_dir_$i &
+        pids+=("$!")
+    done
+
+    # checking IOs are started
+    for i in `seq 1 1`; do
+        while [ ! -f ${DIR_TEST_IN}/obj_unlimited_grouping_on_dir_$i ]; do
+            sleep 1
+        done
+    done
+
+    # checking nb parallel running IOs
+    $valg_phobos dir status -o name,ongoing_io |
+        grep 1 | grep ${dir}
+    stat_nb_io=$($valg_phobos stats dev.nb_ongoing_io --tags family=dir |
+                     awk '{print $(NF)}' | cut -d '=' -f 2)
+    if [[ "${stat_nb_io}" != "1" ]]; then
+        error "nb_ongoing_io stat must be 1 with grouping, we get ${stat_nb_io}"
+    fi
+
+    # waiting the end of IOs
+    for i in `seq 1 ${NB_IO}`; do
+        wait ${pids[${i}]}
+    done
+
+    # NO grouping on dir
+    export PHOBOS_LRS_grouping_on_dir="false"
+    waive_lrs
+    invoke_lrs
+
+    pids=()
+    for i in `seq 1 ${NB_IO}`; do
+        writer_sleep_after_recv_alloc 4 put -f dir --grouping my_group \
+            ${FILES[0]} obj_unlimited_no_grouping_on_dir_$i &
+        pids+=("$!")
+    done
+
+    # checking IOs are started
+    for i in `seq 1 ${NB_IO}`; do
+        while [ ! -f ${DIR_TEST_IN}/obj_unlimited_no_grouping_on_dir_$i ]; do
+            sleep 1
+        done
+    done
+
+    # checking nb parallel running IOs
+    $valg_phobos dir status -o name,ongoing_io |
+        grep ${NB_IO} | grep ${dir}
+    stat_nb_io=$($valg_phobos stats dev.nb_ongoing_io --tags family=dir |
+                     awk '{print $(NF)}' | cut -d '=' -f 2)
+    if [[ "${stat_nb_io}" != "${NB_IO}" ]]; then
+        error "nb_ongoing_io stat must be ${NB_IO} without grouping, we get" \
+              "${stat_nb_io}"
+    fi
+
+    # waiting the end of IOs
+    for i in `seq 1 ${NB_IO}`; do
+        wait ${pids[${i}]}
+    done
+}
+
+
 TESTS=(
     "setup_dir; test_parallel_io dir; cleanup_dir"
     "setup_dir; test_dir_unlimited_parallel_io; cleanup_dir"
+    "setup_dir; test_dir_parallel_io_grouping_on_dir; cleanup_dir"
 )
 
 if [[ -w /dev/changer ]]; then
