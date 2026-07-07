@@ -117,10 +117,12 @@ static int local_setup(void **state, char *oid)
     assert_string_equal(pl_state->objs[0].oid, oid);
 
     /* get copy_name */
-    filters.uuid = pl_state->objs[0].uuid;
-    filters.version = 1;
-    filters.status_filter = DSS_STATUS_FILTER_ALL;
-    rc = phobos_store_copy_list(&filters, DSS_OBJ_ALIVE,
+    struct pho_list_filters copy_filters = {
+          .uuid = pl_state->objs[0].uuid,
+          .version = 1,
+          .status_filter = DSS_STATUS_FILTER_ALL
+      };
+    rc = phobos_store_copy_list(&copy_filters, DSS_OBJ_ALIVE,
                                 &pl_state->copies, &pl_state->n_copy);
     assert_return_code(rc, -rc);
     assert_int_equal(pl_state->n_copy, 1);

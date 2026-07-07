@@ -793,17 +793,17 @@ void pho_xfer_desc_clean(struct pho_xfer_desc *xfer);
 void pho_xfer_clean(struct pho_xfer_target *xfer);
 
 struct pho_list_filters {
-    const char **res;       /**< Resource to filters (oids) */
-    int n_res;              /**< Number of resources */
-    const char *uuid;       /**< UUID of the object */
-    int version;            /**< Version of the object */
-    bool is_pattern;        /**< True if search using POSIX pattern */
-    const char **metadata;  /**< Metadata filter */
-    int n_metadata;         /**< Number of metadata */
-    int status_filter;      /**< Number corresponding to the copy_status
-                              *  filter
-                              */
-    char *copy_name;        /**< Copy's name filter */
+    const char * const *res;      /**< Resource to filters (oids) */
+    int n_res;                    /**< Number of resources */
+    const char * const uuid;      /**< UUID of the object */
+    int version;                  /**< Version of the object */
+    bool is_pattern;              /**< True if search using POSIX pattern */
+    const char * const *metadata; /**< Metadata filter */
+    int n_metadata;               /**< Number of metadata */
+    int status_filter;            /**< Number corresponding to the copy_status
+                                    *  filter
+                                    */
+    const char * const copy_name; /**< Copy's name filter */
 };
 
 /**

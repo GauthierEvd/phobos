@@ -40,7 +40,8 @@
  * \param[in]       n_metadata      Number of requested metadata.
  */
 static void phobos_construct_metadata(GString *metadata_str,
-                                      const char **metadata, int n_metadata)
+                                      const char * const *metadata,
+                                      int n_metadata)
 {
     int i;
 
@@ -62,7 +63,7 @@ static void phobos_construct_metadata(GString *metadata_str,
  * \param[in]       n_res       Number of requested ressources.
  * \param[in]       is_pattern  True if search done using POSIX pattern.
  */
-static void phobos_construct_res(GString *res_str, const char **res,
+static void phobos_construct_res(GString *res_str, const char * const *res,
                                  int n_res, bool is_pattern)
 {
     char *res_prefix = (is_pattern ? "{\"$REGEXP\" : " : "");
