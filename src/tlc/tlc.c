@@ -520,6 +520,7 @@ static int process_stat_request(pho_tlc_req_t *req,
     json_t *stats;
     int rc, rc2;
 
+    rc = 0;
     stats = pho_stats_dump_json(req->stat->ns,
                                 req->stat->name,
                                 req->stat->tags);
