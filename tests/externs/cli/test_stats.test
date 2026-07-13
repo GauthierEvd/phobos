@@ -27,7 +27,7 @@ test_dir=$(dirname $(readlink -e $0))
 . $test_dir/test_env.sh
 . $test_dir/setup_db.sh
 . $test_dir/test_launch_daemon.sh
-
+. $test_dir/tape_drive.sh
 
 function dir_setup
 {
@@ -144,6 +144,26 @@ function test_stats_values
         error "no ongoing format expected"
 }
 
+function do_load_unload
+{
+    local tapes=( $(get_tapes L6 2 | nodeset -e) )
+    local drives=( $(get_lto_drives 6 2) )
+
+    $phobos tape add -t lto6 ${tapes[0]}
+    $phobos tape add -t lto6 ${tapes[1]}
+    $phobos drive add --unlock ${drives[0]}
+    $phobos drive add --unlock ${drives[1]}
+
+    # load tape into drives[0]
+    $phobos drive load ${drives[0]} ${tapes[0]}
+    $phobos drive lookup ${drives[0]} 2>&1
+    $phobos drive load ${drives[1]} ${tapes[1]}
+    $phobos drive lookup ${drives[1]} 2>&1
+
+    $phobos drive unload ${drives[0]}
+    $phobos drive unload ${drives[1]}
+}
+
 function get_file_value #file #name #tags
 {
     local val
@@ -166,12 +186,43 @@ function test_tlc_stats
     $valg_phobos tlc ping --library library_bis \
         || error "TLC ping should be successful"
 
+    do_load_unload
+
     $valg_phobos stats --tlc > $stat_file || error "TLC stats failed"
     cat $stat_file
     # expected: 3 ping
     [ $(get_file_value $stat_file req.count request=PING,status=ok) == "3" ] \
         || error "3 PING requests expected"
 
+    ## check load/unload request and their times
+    [ $(get_file_value $stat_file req.count request=LOAD,status=ok) == "2" ] \
+        || error "2 LOAD requests expected"
+    [ $(get_file_value $stat_file req.count request=UNLOAD,status=ok) == "2" ] \
+        || error "2 UNLOAD requests expected"
+
+    # check times
+    local min
+    local max
+    local sum
+    min=$(get_file_value $stat_file req.min_time_ms request=LOAD)
+    max=$(get_file_value $stat_file req.max_time_ms request=LOAD)
+    sum=$(get_file_value $stat_file req.sum_time_ms request=LOAD)
+    [[ -n "$min" && -n "$max" && -n "$sum" ]] || error "empty value"
+    # we should have 2 * min <= sum <= 2 * max
+    (( $min >= 0 )) || error "min should be >= 0"
+    (( 2*$min <= $sum )) || error "sum should be higher than 2*min"
+    (( $sum <= 2*$max )) || error "sum should be lower than 2*max"
+
+    min=$(get_file_value $stat_file req.min_time_ms request=UNLOAD)
+    max=$(get_file_value $stat_file req.max_time_ms request=UNLOAD)
+    sum=$(get_file_value $stat_file req.sum_time_ms request=UNLOAD)
+    [[ -n "$min" && -n "$max" && -n "$sum" ]] || error "empty value"
+    # we should have 2 * min <= sum <= 2 * max
+    (( $min >= 0 )) || error "min should be >= 0"
+    (( 2*$min <= $sum )) || error "sum should be higher than 2*min"
+    (( $sum <= 2*$max )) || error "sum should be lower than 2*max"
+
+    ## check stats for explicit tlc
     $valg_phobos stats --tlc=legacy > $stat_file || error "TLC stats failed"
     cat $stat_file
     # expected: 3 ping

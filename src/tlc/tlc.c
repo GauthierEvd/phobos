@@ -78,6 +78,9 @@ static bool should_tlc_stop(void)
 struct tlc_stats {
     struct pho_stat *req_ok[PHO_TLC_REQ_COUNT];    /*!< Successful requests */
     struct pho_stat *req_error[PHO_TLC_REQ_COUNT]; /*!< Errorneous requests */
+    struct pho_stat *min_time_ms[PHO_TLC_REQ_COUNT]; /*!< Min request time */
+    struct pho_stat *max_time_ms[PHO_TLC_REQ_COUNT]; /*!< Max request time */
+    struct pho_stat *sum_time_ms[PHO_TLC_REQ_COUNT]; /*!< Sum request times */
 };
 
 struct tlc {
@@ -189,6 +192,25 @@ static int tlc_init(struct tlc *tlc, const char *library)
                                                   TLC_REQ_STAT_NS, "count",
                                                   tag_string);
         free(tag_string);
+
+        if (asprintf(&tag_string, "request=%s", tlc_req_name[i])
+            == -1)
+            LOG_GOTO(close_lib, rc = -ENOMEM, "Failed to allocate string");
+
+        tlc->stats.min_time_ms[i] =
+            pho_stat_create(PHO_STAT_GAUGE, TLC_REQ_STAT_NS, "min_time_ms",
+                            tag_string);
+        /* set max uint64 to indicate min is not yet set */
+        pho_stat_set(tlc->stats.min_time_ms[i], UINT64_MAX);
+
+        tlc->stats.max_time_ms[i] =
+            pho_stat_create(PHO_STAT_GAUGE, TLC_REQ_STAT_NS, "max_time_ms",
+                            tag_string);
+        tlc->stats.sum_time_ms[i] =
+            pho_stat_create(PHO_STAT_COUNTER, TLC_REQ_STAT_NS, "sum_time_ms",
+                            tag_string);
+
+        free(tag_string);
     }
 
     return rc;
@@ -218,6 +240,9 @@ static void tlc_fini(struct tlc *tlc)
     for (i = 0; i < PHO_TLC_REQ_COUNT; i++) {
         pho_stat_destroy(&tlc->stats.req_ok[i]);
         pho_stat_destroy(&tlc->stats.req_error[i]);
+        pho_stat_destroy(&tlc->stats.min_time_ms[i]);
+        pho_stat_destroy(&tlc->stats.max_time_ms[i]);
+        pho_stat_destroy(&tlc->stats.sum_time_ms[i]);
     }
 }
 
@@ -565,6 +590,28 @@ send_resp:
     return rc;
 }
 
+/** Update duration stats for a given request */
+static void update_durations(struct tlc_stats *stats, enum tlc_req_type reqtype,
+                             uint64_t duration_ms)
+{
+    uint64_t current_min, current_max;
+    struct pho_stat *min, *max, *sum;
+
+    min = stats->min_time_ms[reqtype];
+    max = stats->max_time_ms[reqtype];
+    sum = stats->sum_time_ms[reqtype];
+
+    current_min = pho_stat_get(min);
+    current_max = pho_stat_get(max);
+
+    if (duration_ms < current_min)
+        pho_stat_set(min, duration_ms);
+
+    if (duration_ms > current_max)
+        pho_stat_set(max, duration_ms);
+
+    pho_stat_incr(sum, duration_ms);
+}
 
 static int recv_work(struct tlc *tlc)
 {
@@ -583,6 +630,8 @@ static int recv_work(struct tlc *tlc)
 
     for (i = 0; i < n_data; i++) {
         enum tlc_req_type type = PHO_TLC_REQ_COUNT; /* no meaningful request */
+        struct timespec start, end;
+        uint64_t duration_ms;
         pho_tlc_req_t *req;
         int st = 0;
 
@@ -592,6 +641,8 @@ static int recv_work(struct tlc *tlc)
         req = pho_srl_tlc_request_unpack(&data[i].buf);
         if (!req)
             continue;
+
+        clock_gettime(CLOCK_MONOTONIC, &start);
 
         if (pho_tlc_request_is_ping(req)) {
             type = PHO_TLC_REQ_PING;
@@ -637,10 +688,16 @@ static int recv_work(struct tlc *tlc)
 
 out_request:
         if (type != PHO_TLC_REQ_COUNT) {
-            if (st == 0)
+            if (st == 0) {
+                /* only record time of successful calls */
+                clock_gettime(CLOCK_MONOTONIC, &end);
+                duration_ms = (end.tv_sec - start.tv_sec) * 1000;
+                duration_ms += (end.tv_nsec - start.tv_nsec) / 1000000;
                 pho_stat_incr(tlc->stats.req_ok[type], 1);
-            else
+                update_durations(&tlc->stats, type, duration_ms);
+            } else {
                 pho_stat_incr(tlc->stats.req_error[type], 1);
+            }
         }
         pho_srl_tlc_request_free(req, true);
     }
