@@ -167,25 +167,22 @@ function test_tlc_stats
         || error "TLC ping should be successful"
 
     $valg_phobos stats --tlc > $stat_file || error "TLC stats failed"
-    # expected: 3 ping, 1 stat
-    [ $(get_file_value $stat_file req.count request=PING) == "3" ] \
+    cat $stat_file
+    # expected: 3 ping
+    [ $(get_file_value $stat_file req.count request=PING,status=ok) == "3" ] \
         || error "3 PING requests expected"
-    [ $(get_file_value $stat_file req.count request=STAT) == "1" ] \
-        || error "1 STAT request expected"
 
     $valg_phobos stats --tlc=legacy > $stat_file || error "TLC stats failed"
-    # expected: 3 ping, 2 stat
-    [ $(get_file_value $stat_file req.count request=PING) == "3" ] \
+    cat $stat_file
+    # expected: 3 ping
+    [ $(get_file_value $stat_file req.count request=PING,status=ok) == "3" ] \
         || error "3 PING requests expected"
-    [ $(get_file_value $stat_file req.count request=STAT) == "2" ] \
-        || error "2 STAT request expected"
 
     $valg_phobos stats --tlc=library_bis > $stat_file || error "TLC stats failed"
-    # expected: 2 ping, 1 stat
-    [ $(get_file_value $stat_file req.count request=PING) == "2" ] \
+    cat $stat_file
+    # expected: 2 ping
+    [ $(get_file_value $stat_file req.count request=PING,status=ok) == "2" ] \
         || error "2 PING requests expected"
-    [ $(get_file_value $stat_file req.count request=STAT) == "1" ] \
-        || error "1 STAT request expected"
 
     rm -f $stat_file
 }

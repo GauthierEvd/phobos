@@ -75,12 +75,16 @@ static bool should_tlc_stop(void)
     return !running;
 }
 
+struct tlc_stats {
+    struct pho_stat *req_ok[PHO_TLC_REQ_COUNT];    /*!< Successful requests */
+    struct pho_stat *req_error[PHO_TLC_REQ_COUNT]; /*!< Errorneous requests */
+};
+
 struct tlc {
     struct pho_comm_info comm;  /*!< Communication handle */
     struct lib_descriptor lib;  /*!< Library descriptor */
     struct dss_handle dss;      /*!< DSS handle, configured from conf */
-
-    struct pho_stat *req_stats[PHO_TLC_REQ_COUNT]; /*!< Counters per req type */
+    struct tlc_stats stats;     /*!< TLC metrology */
 };
 
 static int tlc_init(struct tlc *tlc, const char *library)
@@ -168,11 +172,22 @@ static int tlc_init(struct tlc *tlc, const char *library)
     for (i = 0; i < PHO_TLC_REQ_COUNT; i++) {
         char *tag_string = NULL;
 
-        if (asprintf(&tag_string, "request=%s", tlc_req_name[i]) == -1)
+        if (asprintf(&tag_string, "request=%s,status=ok", tlc_req_name[i])
+            == -1)
             LOG_GOTO(close_lib, rc = -ENOMEM, "Failed to allocate string");
 
-        tlc->req_stats[i] = pho_stat_create(PHO_STAT_COUNTER, TLC_REQ_STAT_NS,
-                                            "count", tag_string);
+        tlc->stats.req_ok[i] = pho_stat_create(PHO_STAT_COUNTER,
+                                               TLC_REQ_STAT_NS, "count",
+                                               tag_string);
+        free(tag_string);
+
+        if (asprintf(&tag_string, "request=%s,status=error", tlc_req_name[i])
+            == -1)
+            LOG_GOTO(close_lib, rc = -ENOMEM, "Failed to allocate string");
+
+        tlc->stats.req_error[i] = pho_stat_create(PHO_STAT_COUNTER,
+                                                  TLC_REQ_STAT_NS, "count",
+                                                  tag_string);
         free(tag_string);
     }
 
@@ -200,8 +215,10 @@ static void tlc_fini(struct tlc *tlc)
 
     dss_fini(&tlc->dss);
 
-    for (i = 0; i < PHO_TLC_REQ_COUNT; i++)
-        pho_stat_destroy(&tlc->req_stats[i]);
+    for (i = 0; i < PHO_TLC_REQ_COUNT; i++) {
+        pho_stat_destroy(&tlc->stats.req_ok[i]);
+        pho_stat_destroy(&tlc->stats.req_error[i]);
+    }
 }
 
 /**
@@ -565,7 +582,9 @@ static int recv_work(struct tlc *tlc)
     }
 
     for (i = 0; i < n_data; i++) {
+        enum tlc_req_type type = PHO_TLC_REQ_COUNT; /* no meaningful request */
         pho_tlc_req_t *req;
+        int st = 0;
 
         if (data[i].buf.size == -1) /* close notification, ignore */
             continue;
@@ -575,48 +594,54 @@ static int recv_work(struct tlc *tlc)
             continue;
 
         if (pho_tlc_request_is_ping(req)) {
-            pho_stat_incr(tlc->req_stats[PHO_TLC_REQ_PING], 1);
-            process_ping_request(tlc, req, data[i].fd);
+            type = PHO_TLC_REQ_PING;
+            st = process_ping_request(tlc, req, data[i].fd);
             goto out_request;
         }
 
         if (pho_tlc_request_is_drive_lookup(req)) {
-            pho_stat_incr(tlc->req_stats[PHO_TLC_REQ_DRIVE_LOOKUP], 1);
-            process_drive_lookup_request(tlc, req, data[i].fd);
+            type = PHO_TLC_REQ_DRIVE_LOOKUP;
+            st = process_drive_lookup_request(tlc, req, data[i].fd);
             goto out_request;
         }
 
         if (pho_tlc_request_is_load(req)) {
-            pho_stat_incr(tlc->req_stats[PHO_TLC_REQ_LOAD], 1);
-            process_load_request(tlc, req, data[i].fd);
+            type = PHO_TLC_REQ_LOAD;
+            st = process_load_request(tlc, req, data[i].fd);
             goto out_request;
         }
 
         if (pho_tlc_request_is_unload(req)) {
-            pho_stat_incr(tlc->req_stats[PHO_TLC_REQ_UNLOAD], 1);
-            process_unload_request(tlc, req, data[i].fd);
+            type = PHO_TLC_REQ_UNLOAD;
+            st = process_unload_request(tlc, req, data[i].fd);
             goto out_request;
         }
 
         if (pho_tlc_request_is_status(req)) {
-            pho_stat_incr(tlc->req_stats[PHO_TLC_REQ_STATUS], 1);
-            process_status_request(tlc, req, data[i].fd);
+            type = PHO_TLC_REQ_STATUS;
+            st = process_status_request(tlc, req, data[i].fd);
             goto out_request;
         }
 
         if (pho_tlc_request_is_refresh(req)) {
-            pho_stat_incr(tlc->req_stats[PHO_TLC_REQ_REFRESH], 1);
-            process_refresh_request(tlc, req, data[i].fd);
+            type = PHO_TLC_REQ_REFRESH;
+            st = process_refresh_request(tlc, req, data[i].fd);
             goto out_request;
         }
 
         if (pho_tlc_request_is_stat(req)) {
-            pho_stat_incr(tlc->req_stats[PHO_TLC_REQ_STAT], 1);
-            process_stat_request(req, data[i].fd);
+            type = PHO_TLC_REQ_STAT;
+            st = process_stat_request(req, data[i].fd);
             goto out_request;
         }
 
 out_request:
+        if (type != PHO_TLC_REQ_COUNT) {
+            if (st == 0)
+                pho_stat_incr(tlc->stats.req_ok[type], 1);
+            else
+                pho_stat_incr(tlc->stats.req_error[type], 1);
+        }
         pho_srl_tlc_request_free(req, true);
     }
 
