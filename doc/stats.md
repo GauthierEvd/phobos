@@ -1,6 +1,6 @@
 The document describes the metrics reported by 'phobos stats'.
 
-# Stats from phobosd
+# Stats from phobosd
 
 
  |      Tags      |        Metric Name       |  Type   |       Description                                             |
@@ -34,4 +34,13 @@ The document describes the metrics reported by 'phobos stats'.
  | request        | req.nosync_media_cnt     | counter | Number of media released after READ operation.                |
  | request        | req.nosync_size          | counter | Size of data released after READ operation (bytes).           |
  |                | req.response_qsize       | gauge   | Size of the global response queue.                            |
+
+# Stats from tlc
+
+ |      Tags       |        Metric Name       |  Type   |       Description                                             |
+ |-----------------|--------------------------|---------|---------------------------------------------------------------|
+ | request, status | req.count                | counter | Number of request per type and status (ok, error)             |
+ | request         | req.min_time_ms          | gauge   | Duration (in ms) of the shortest successful request of this type. |
+ | request         | req.max_time_ms          | gauge   | Duration (in ms) of the longest successful request of this type. |
+ | request         | req.sum_time_ms          | counter | Total duration (in ms) of all successful requests of this type. |
 
