@@ -35,5 +35,5 @@ class LockOptHandler(ActionOptHandler):
         parser.add_argument('res', nargs='+',
                             help='Resource(s) to lock (for a device, could be '
                                  'the path or the id name)')
-        parser.add_argument('--library',
+        parser.add_argument('-L', '--library',
                             help="Library containing resources to lock")

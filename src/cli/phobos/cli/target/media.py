@@ -78,7 +78,8 @@ class MediaImportOptHandler(XferOptHandler):
                                  "with the hashes of the extent")
         parser.add_argument('--unlock', action='store_true',
                             help="unlocks the tape after the import")
-        parser.add_argument('--library', help="Library containing each medium")
+        parser.add_argument('-L', '--library',
+                            help="Library containing each medium")
 
 
 class MediaListOptHandler(ListOptHandler):
@@ -116,7 +117,7 @@ class MediaLocateOptHandler(ActionOptHandler):
     def add_options(cls, parser):
         super(MediaLocateOptHandler, cls).add_options(parser)
         parser.add_argument('res', help='media to locate')
-        parser.add_argument('--library',
+        parser.add_argument('-L', '--library',
                             help="Library containing the media to locate")
 
 
@@ -129,7 +130,7 @@ class MediaRebuildOptHandler(RebuildOptHandler):
     def add_options(cls, parser):
         """Add resource-specific options."""
         super(MediaRebuildOptHandler, cls).add_options(parser)
-        parser.add_argument('--library',
+        parser.add_argument('-L', '--library',
                             help="Library containing rebuilt resources")
         parser.add_argument('res', nargs='+', help='Resource(s) to rebuild')
 
@@ -144,7 +145,7 @@ class MediaRenameOptHandler(ActionOptHandler):
     def add_options(cls, parser):
         """Add resource-specific options."""
         super(MediaRenameOptHandler, cls).add_options(parser)
-        parser.add_argument('--library',
+        parser.add_argument('-L', '--library',
                             help="Library containing the medium to rename")
         parser.add_argument('--new-library',
                             help="New library for these medium(s)")
@@ -169,7 +170,7 @@ class MediaSetAccessOptHandler(ActionOptHandler):
         )
         parser.add_argument('res', nargs='+', metavar='RESOURCE',
                             help='Resource(s) to update access mode')
-        parser.add_argument('--library',
+        parser.add_argument('-L', '--library',
                             help="Library containing the medium to update "
                                  "access mode")
         parser.formatter_class = argparse.RawDescriptionHelpFormatter
@@ -188,7 +189,7 @@ class MediaUpdateOptHandler(ActionOptHandler):
                             help='New tags for this media (comma-separated, '
                                  'e.g. "-T foo,bar"), empty string to clear '
                                  'tags, new tags list overwrite current tags')
-        parser.add_argument('--library',
+        parser.add_argument('-L', '--library',
                             help="Library containing the medium to update")
         parser.add_argument('res', nargs='+', help='Resource(s) to update')
 

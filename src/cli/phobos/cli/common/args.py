@@ -33,7 +33,7 @@ def add_put_arguments(parser):
     parser.add_argument('-f', '--family',
                         choices=list(map(rsc_family2str, ResourceFamily)),
                         help='targeted storage family')
-    parser.add_argument('--library',
+    parser.add_argument('-L', '--library',
                         help='desired library (if not set, any available '
                              'library will be used)')
     parser.add_argument('-l', '--layout', '--lyt',
@@ -64,7 +64,7 @@ def add_list_arguments(parser, attr, default_output, sort_option=False, # pylint
                                   "order, choose from {" + " ".join(attr) + "} "
                                   ))
     if lib_option:
-        parser.add_argument('--library',
+        parser.add_argument('-L', '--library',
                             help=("attribute to filter the output by library "
                                   "name"))
     if status_option:
@@ -77,7 +77,7 @@ def add_log_arguments(parser, verb):
     parser.add_argument('-D', '--drive',
                         help=f'drive ID of the logs to {verb}')
     parser.add_argument('-T', '--tape', help=f'tape ID of the logs to {verb}')
-    parser.add_argument('--library',
+    parser.add_argument('-L', '--library',
                         help="Library containing the target drive and tape")
     parser.add_argument('-e', '--errno', type=int,
                         help=f'error number of the logs to {verb}')

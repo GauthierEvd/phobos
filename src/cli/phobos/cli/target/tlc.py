@@ -38,7 +38,8 @@ class TLCPingOptHandler(PingOptHandler):
     def add_options(cls, parser):
         """Add resource-specific options."""
         super(TLCPingOptHandler, cls).add_options(parser)
-        parser.add_argument('--library', help="Library of the TLC to ping")
+        parser.add_argument('-L', '--library',
+                            help="Library of the TLC to ping")
 
 
 class TLCOptHandler(BaseResourceOptHandler):

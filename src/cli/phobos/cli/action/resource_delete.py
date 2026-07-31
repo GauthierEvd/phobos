@@ -36,7 +36,7 @@ class ResourceDeleteOptHandler(ActionOptHandler):
     @classmethod
     def add_options(cls, parser):
         super(ResourceDeleteOptHandler, cls).add_options(parser)
-        parser.add_argument('--library',
+        parser.add_argument('-L', '--library',
                             help="Library containing deleted resources")
         parser.add_argument('-l', '--lost', action='store_true',
                             help="remove all extents associated with the "

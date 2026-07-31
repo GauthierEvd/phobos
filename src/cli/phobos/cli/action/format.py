@@ -38,6 +38,6 @@ class FormatOptHandler(ActionOptHandler):
                                  ' 0 means no limitation (default is 0)')
         parser.add_argument('--unlock', action='store_true',
                             help='Unlock media once it is ready to be written')
-        parser.add_argument('--library',
+        parser.add_argument('-L', '--library',
                             help="Library containing added resources")
         parser.add_argument('res', nargs='+', help='Resource(s) to format')

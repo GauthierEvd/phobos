@@ -74,7 +74,7 @@ class DriveLoadOptHandler(ActionOptHandler):
                             help='Target drive (could be the path or the '
                                  'serial number)')
         parser.add_argument('tape_label', help='Tape label to load')
-        parser.add_argument('--library',
+        parser.add_argument('-L', '--library',
                             help="Library containing the target drive and tape")
 
 
@@ -91,7 +91,7 @@ class DriveLookupOptHandler(ActionOptHandler):
         parser.add_argument('res',
                             help='Drive to lookup (could be '
                                  'the path or the serial number)')
-        parser.add_argument('--library',
+        parser.add_argument('-L', '--library',
                             help="Library containing the drive to lookup")
 
 
@@ -110,7 +110,7 @@ class DriveMigrateOptHandler(ActionOptHandler):
         parser.add_argument('--host', help='New host for these drives')
         parser.add_argument('--new-library',
                             help='New library for these drives')
-        parser.add_argument('--library',
+        parser.add_argument('-L', '--library',
                             help="Library containing migrated drive(s) "
                                  "(This option is to target the good drive(s) "
                                  "among the existing libraries, not to set a "
@@ -129,7 +129,7 @@ class DriveScsiReleaseOptHandler(ActionOptHandler):
         parser.add_argument('res', nargs='+',
                             help="Drive(s) with a SCSI reservation to release"
                                  "and a mounted tape into.")
-        parser.add_argument('--library',
+        parser.add_argument('-L', '--library',
                             help="Library containing the drives to release")
 
 
@@ -150,7 +150,7 @@ class DriveUnloadOptHandler(ActionOptHandler):
                             help='Tape label to unload (unload is done only if '
                                  'the drive contains this label, any tape is '
                                  'unloaded if this option is not set)')
-        parser.add_argument('--library',
+        parser.add_argument('-L', '--library',
                             help="Library containing the target drive")
 
 

@@ -33,6 +33,6 @@ class AddOptHandler(ActionOptHandler):
         super(AddOptHandler, cls).add_options(parser)
         parser.add_argument('--unlock', action='store_true',
                             help='Unlock resource on success')
-        parser.add_argument('--library',
+        parser.add_argument('-L', '--library',
                             help="Library containing added resources")
         parser.add_argument('res', nargs='+', help='Resource(s) to add')

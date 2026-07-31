@@ -35,5 +35,5 @@ class UnlockOptHandler(ActionOptHandler):
         parser.add_argument('res', nargs='+', help='Resource(s) to unlock')
         parser.add_argument('--force', action='store_true',
                             help='Do not check the current lock state')
-        parser.add_argument('--library',
+        parser.add_argument('-L', '--library',
                             help="Library containing resources to unlock")
