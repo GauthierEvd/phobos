@@ -104,7 +104,7 @@ static struct option cliopts[] = {
 static void usage(char *progname)
 {
     printf(
-        "Usage: %s [--load-first] [--num-threads <n>] "
+        "Usage: %s [--num-threads <n>] "
         "[--action <put>] --file <file>\n"
         "Run <n> synchronized store actions concurrently to check for race "
         "conditions\n"
