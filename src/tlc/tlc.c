@@ -691,8 +691,8 @@ out_request:
             if (st == 0) {
                 /* only record time of successful calls */
                 clock_gettime(CLOCK_MONOTONIC, &end);
-                duration_ms = (end.tv_sec - start.tv_sec) * 1000;
-                duration_ms += (end.tv_nsec - start.tv_nsec) / 1000000;
+                duration_ms = (end.tv_sec - start.tv_sec) * 1000
+                              + (end.tv_nsec - start.tv_nsec) / 1000000;
                 pho_stat_incr(tlc->stats.req_ok[type], 1);
                 update_durations(&tlc->stats, type, duration_ms);
             } else {
